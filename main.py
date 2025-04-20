@@ -1,9 +1,21 @@
 import numpy as np
-import pandas as pd
+from dataset_processor.fitness_processor import FitnessDatasetProcessor
+from dataset_processor.nutrition_processor import NutritionDatasetProcessor
 from NutritionModule import NutritionRecommender
 from FitnessModule import FitnessRecommender
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def create_sample_dataset():
+def main():
+    # Load and preprocess datasets
+    nutrition_data = NutritionDatasetProcessor.load_nutrition_data("nutrition_data.csv")
+    nutrition_data = NutritionDatasetProcessor.preprocess_nutrition_data(nutrition_data)
+
+    fitness_data = FitnessDatasetProcessor.load_fitness_data("fitness_data.csv")
+    fitness_data = FitnessDatasetProcessor.preprocess_fitness_data(fitness_data)
+
+    # Create sample user data
     user_data = pd.DataFrame({
         'age': [25, 35, 45],
         'weight': [70, 80, 90],
@@ -11,32 +23,18 @@ def create_sample_dataset():
         'health_goals': [['weight loss'], ['muscle gain'], ['general fitness']],
         'fitness_levels': [['beginner'], ['intermediate'], ['advanced']]
     })
-    nutrition_data = pd.DataFrame({
-        'food_id': range(1, 101),
-        'name': [f'Food {i}' for i in range(1, 101)],
-        'calories': np.random.randint(100, 500, 100),
-        'protein': np.random.randint(5, 30, 100),
-        'carbs': np.random.randint(10, 50, 100),
-        'fat': np.random.randint(1, 20, 100)
-    })
-    activity_data = pd.DataFrame({
-        'activity_id': range(1, 51),
-        'name': [f'Activity {i}' for i in range(1, 51)],
-        'calories_burned': np.random.randint(50, 500, 50),
-        'intensity': np.random.choice(['low', 'moderate', 'high'], 50),
-        'duration': np.random.randint(15, 90, 50)
-    })
-    return user_data, nutrition_data, activity_data
 
-def main():
-    np.random.seed(42)
-    user_data, nutrition_data, activity_data = create_sample_dataset()
+    # Initialize recommenders
     nutrition_recommender = NutritionRecommender()
     fitness_recommender = FitnessRecommender()
+
+    # Train recommenders
     nutrition_interactions = np.random.randint(2, size=(len(user_data), len(nutrition_data)))
-    fitness_interactions = np.random.randint(2, size=(len(user_data), len(activity_data)))
+    fitness_interactions = np.random.randint(2, size=(len(user_data), len(fitness_data)))
     nutrition_recommender.train(user_data, nutrition_data, nutrition_interactions)
-    fitness_recommender.train(user_data, activity_data, fitness_interactions)
+    fitness_recommender.train(user_data, fitness_data, fitness_interactions)
+
+    # Generate recommendations
     for i, user in user_data.iterrows():
         print(f"\n--- Recommendations for User {i+1} ---")
         print("Nutrition Recommendations:")
