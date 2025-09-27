@@ -2,19 +2,16 @@ import numpy as np
 import pandas as pd
 from tensorflow import keras
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from dataset_processor.fitness_processor import FitnessDatasetProcessor  # Import the processor
+from dataset_processor.fitness_processor import FitnessDatasetProcessor
 
 class FitnessRecommender:
     def __init__(self):
         self.user_preprocessor = StandardScaler()
-        self.activity_preprocessor = OneHotEncoder(sparse_output=False, handle_unknown='ignore')  # Updated argument
+        self.activity_preprocessor = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
         self.activity_database = None
         self.fitness_model = None
 
     def _build_fitness_model(self):
-        """
-        Build the fitness recommendation model.
-        """
         user_input = keras.layers.Input(shape=(self.user_feature_dim,))
         activity_input = keras.layers.Input(shape=(self.activity_feature_dim,))
         user_embedding = keras.layers.Dense(64, activation='relu')(user_input)
@@ -23,46 +20,28 @@ class FitnessRecommender:
         x = keras.layers.Dense(128, activation='relu')(interaction)
         x = keras.layers.BatchNormalization()(x)
         x = keras.layers.Dropout(0.3)(x)
-        fitness_recommendation = keras.layers.Dense(1, activation='sigmoid', name='fitness_recommendation')(x)
+        fitness_recommendation = keras.layers.Dense(1, activation='sigmoid')(x)
         model = keras.Model(inputs=[user_input, activity_input], outputs=fitness_recommendation)
         model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001), loss='binary_crossentropy')
         return model
 
     def preprocess_data(self, user_data, activity_data):
-        """
-        Preprocess user and activity data for training.
-        """
-        # Preprocess user data
-        user_features = self.user_preprocessor.fit_transform(user_data[['age', 'weight', 'height']])
-
-        # Preprocess activity data
-        required_columns = ["level", "bodypart", "equipment", "type"]  # Metrics 1, 2, 3, 4
-        activity_features = self.activity_preprocessor.fit_transform(activity_data[required_columns])
-
-        # Store dimensions and activity database
+        self.user_preprocessor.fit(user_data[['age', 'weight', 'height', 'tdee']])
+        user_features = self.user_preprocessor.transform(user_data[['age', 'weight', 'height', 'tdee']])
+        required_columns = ["level", "bodypart", "equipment", "type"]
+        self.activity_preprocessor.fit(activity_data[required_columns])
+        activity_features = self.activity_preprocessor.transform(activity_data[required_columns])
         self.user_feature_dim = user_features.shape[1]
         self.activity_feature_dim = activity_features.shape[1]
         self.activity_database = activity_data
-
-        # Build the fitness model
         self.fitness_model = self._build_fitness_model()
-
         return user_features, activity_features
 
     def train(self, user_data, activity_data, interactions):
-        """
-        Train the fitness recommendation model.
-        """
         user_features, activity_features = self.preprocess_data(user_data, activity_data)
-
-        # Create Cartesian product of users and activities
         user_features_repeated = np.repeat(user_features, len(activity_features), axis=0)
         activity_features_tiled = np.tile(activity_features, (len(user_features), 1))
-
-        # Flatten interactions to match the Cartesian product
         interactions_flattened = interactions.flatten()
-
-        # Train the model
         self.fitness_model.fit(
             [user_features_repeated, activity_features_tiled],
             interactions_flattened,
@@ -71,27 +50,21 @@ class FitnessRecommender:
         )
 
     def generate_recommendations(self, user, top_k=5):
-        """
-        Generate fitness recommendations for a user.
-        """
-        # Convert the user data to a DataFrame with a single row
-        user_features = self.user_preprocessor.transform(
-            pd.DataFrame([user[['age', 'weight', 'height']].values], columns=['age', 'weight', 'height'])
+        user_df = pd.DataFrame([{
+            'age': user['age'],
+            'weight': user['weight'],
+            'height': user['height'],
+            'tdee': user['tdee']
+        }])
+        if not hasattr(self.user_preprocessor, 'mean_'):
+            self.user_preprocessor.fit(user_df)
+        user_features = self.user_preprocessor.transform(user_df)
+        fitness_features = self.activity_preprocessor.transform(
+            self.activity_database[['level', 'bodypart', 'equipment', 'type']]
         )
-
-        # Transform activity features
-        activity_features = self.activity_preprocessor.transform(self.activity_database[["level", "bodypart", "equipment", "type"]])
-
-        # Repeat user features to match the number of activities
-        user_features_repeated = np.repeat(user_features, len(activity_features), axis=0)
-
-        # Predict scores for all activities
-        scores = self.fitness_model.predict([user_features_repeated, activity_features], batch_size=128)
-
-        # Get the indices of the top_k activities
+        user_features_repeated = np.repeat(user_features, len(fitness_features), axis=0)
+        scores = self.fitness_model.predict([user_features_repeated, fitness_features], batch_size=128)
         top_indices = scores.flatten().argsort()[-top_k:][::-1]
-
-        # Return the top_k activities
         return self.activity_database.iloc[top_indices]
 
 def main():
@@ -109,6 +82,21 @@ def main():
     # Load and preprocess fitness data using FitnessDatasetProcessor
     fitness_data = FitnessDatasetProcessor.load_fitness_data()
     fitness_data = FitnessDatasetProcessor.preprocess_fitness_data(fitness_data)
+
+    # Clean nutrition data
+    nutrition_data = nutrition_data.drop_duplicates(subset=['food']).reset_index(drop=True)
+    for col in ['calories', 'fat', 'protein', 'carbohydrates']:
+        if col in nutrition_data.columns:
+            nutrition_data[col] = pd.to_numeric(nutrition_data[col], errors='coerce').fillna(0)
+
+    fitness_data = fitness_data.drop_duplicates(subset=['name']).reset_index(drop=True)
+
+    # Filter nutrition_data BEFORE generating interactions
+    nutrition_data = nutrition_data[
+        (nutrition_data['protein'] < 100) &
+        (nutrition_data['calories'] < 1500) &
+        (nutrition_data['fat'] < 100)
+    ].reset_index(drop=True)
 
     # Initialize the fitness recommender
     fitness_recommender = FitnessRecommender()

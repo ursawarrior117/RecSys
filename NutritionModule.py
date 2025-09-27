@@ -1,90 +1,86 @@
 import numpy as np
 import pandas as pd
-from tensorflow import keras
 from sklearn.preprocessing import StandardScaler
+from tensorflow import keras
 
 class NutritionRecommender:
     def __init__(self):
+        self.user_feature_cols = ['age', 'weight', 'height', 'tdee', 'sleep_good']
+        self.nutrition_feature_cols = [
+            'calories', 'fat', 'protein', 'carbohydrates', 'fiber', 'sugars',
+            'cholesterol', 'sodium', 'monounsaturated_fats', 'polyunsaturated_fats',
+            'saturated_fats', 'zinc', 'calcium', 'magnesium', 'caffeine'
+        ]
         self.user_preprocessor = StandardScaler()
         self.nutrition_preprocessor = StandardScaler()
         self.nutrition_database = None
         self.nutrition_model = None
 
-    def _build_nutrition_model(self):
-        user_input = keras.layers.Input(shape=(self.user_feature_dim,))
-        food_input = keras.layers.Input(shape=(self.food_feature_dim,))
-        user_embedding = keras.layers.Dense(64, activation='relu')(user_input)
-        food_embedding = keras.layers.Dense(64, activation='relu')(food_input)
-        interaction = keras.layers.Concatenate()([user_embedding, food_embedding])
-        x = keras.layers.Dense(128, activation='relu')(interaction)
-        x = keras.layers.BatchNormalization()(x)
-        x = keras.layers.Dropout(0.3)(x)
-        nutrition_recommendation = keras.layers.Dense(1, activation='sigmoid', name='nutrition_recommendation')(x)
-        model = keras.Model(inputs=[user_input, food_input], outputs=nutrition_recommendation)
-        model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001), loss='binary_crossentropy')
-        return model
+    def build_model(self, user_dim, item_dim):
+        input_user = keras.Input(shape=(user_dim,))
+        input_item = keras.Input(shape=(item_dim,))
+        x = keras.layers.Concatenate()([input_user, input_item])
+        x = keras.layers.Dense(64, activation='relu')(x)
+        x = keras.layers.Dense(32, activation='relu')(x)
+        output = keras.layers.Dense(1, activation='sigmoid')(x)
+        model = keras.Model(inputs=[input_user, input_item], outputs=output)
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        self.nutrition_model = model
 
     def preprocess_data(self, user_data, nutrition_data):
-        user_features = self.user_preprocessor.fit_transform(user_data[['age', 'weight', 'height']])
-        required_columns = [
-            "calories", "fat", "saturated_fats", "monounsaturated_fats", "polyunsaturated_fats",
-            "carbohydrates", "sugars", "protein", "fiber", "cholesterol", "sodium"
+        nutrition_data = nutrition_data[
+            (nutrition_data['protein'] < 100) &
+            (nutrition_data['calories'] < 1500) &
+            (nutrition_data['fat'] < 100)
         ]
-        processed_nutrition_features = self.nutrition_preprocessor.fit_transform(nutrition_data[required_columns])
-        self.user_feature_dim = user_features.shape[1]
-        self.food_feature_dim = processed_nutrition_features.shape[1]
-        self.nutrition_database = nutrition_data
-        self.nutrition_model = self._build_nutrition_model()
-        return user_features, processed_nutrition_features
+        user_features = self.user_preprocessor.fit_transform(user_data[self.user_feature_cols])
+        nutrition_features = self.nutrition_preprocessor.fit_transform(nutrition_data[self.nutrition_feature_cols])
+        return user_features, nutrition_features
 
     def train(self, user_data, nutrition_data, interactions):
-        """
-        Train the nutrition recommendation model.
-        """
-        # Preprocess data
         user_features, nutrition_features = self.preprocess_data(user_data, nutrition_data)
-
-        # Create Cartesian product of users and nutrition items
-        user_features_repeated = np.repeat(user_features, len(nutrition_features), axis=0)
-        nutrition_features_tiled = np.tile(nutrition_features, (len(user_features), 1))
-
-        # Flatten interactions to match the Cartesian product
-        interactions_flattened = interactions.flatten()
-
-        # Train the model
-        self.nutrition_model.fit(
-            [user_features_repeated, nutrition_features_tiled],
-            interactions_flattened,
-            epochs=10,
-            batch_size=32
-        )
+        self.nutrition_database = nutrition_data.copy()
+        if self.nutrition_model is None:
+            self.build_model(user_features.shape[1], nutrition_features.shape[1])
+        X_user = np.repeat(user_features, nutrition_features.shape[0], axis=0)
+        X_item = np.tile(nutrition_features, (user_features.shape[0], 1))
+        y = interactions.flatten()
+        self.nutrition_model.fit([X_user, X_item], y, epochs=5, batch_size=32, verbose=0)
 
     def generate_recommendations(self, user, top_k=5):
-        """
-        Generate nutrition recommendations for a user.
-        """
-        # Convert the user data to a DataFrame with a single row
-        user_features = self.user_preprocessor.transform(
-            pd.DataFrame([user[['age', 'weight', 'height']].values], columns=['age', 'weight', 'height'])
-        )
-
-        # Use the same required columns as in the preprocess_data method
-        required_columns = [
-            "calories", "fat", "saturated_fats", "monounsaturated_fats", "polyunsaturated_fats",
-            "carbohydrates", "sugars", "protein", "fiber", "cholesterol", "sodium"
-        ]
-
-        # Transform nutrition data using the same columns
-        nutrition_features = self.nutrition_preprocessor.transform(self.nutrition_database[required_columns])
-
-        # Repeat user features to match the number of nutrition items
+        user_df = pd.DataFrame([user])[self.user_feature_cols]
+        user_features = self.user_preprocessor.transform(user_df)
+        nutrition_features = self.nutrition_preprocessor.transform(self.nutrition_database[self.nutrition_feature_cols])
         user_features_repeated = np.repeat(user_features, len(nutrition_features), axis=0)
-
-        # Predict scores for all nutrition items
-        scores = self.nutrition_model.predict([user_features_repeated, nutrition_features], batch_size=128)
-
-        # Get the indices of the top_k nutrition items
+        scores = self.nutrition_model.predict([user_features_repeated, nutrition_features], batch_size=128, verbose=0)
         top_indices = scores.flatten().argsort()[-top_k:][::-1]
-
-        # Return the top_k nutrition items
         return self.nutrition_database.iloc[top_indices]
+
+    def predict_scores(self, user, nutrition_data):
+        user_df = pd.DataFrame([user])[self.user_feature_cols]
+        user_features = self.user_preprocessor.transform(
+            pd.concat([user_df]*len(nutrition_data), ignore_index=True)
+        )
+        nutrition_features = self.nutrition_preprocessor.transform(
+            nutrition_data[self.nutrition_feature_cols]
+        )
+        scores = self.nutrition_model.predict([user_features, nutrition_features], verbose=0)
+        return scores.flatten()
+
+def hybrid_nutrition_recommendations(user, nutrition_data, recommender, top_k=20, alpha=0.5):
+    collab_scores = recommender.predict_scores(user, nutrition_data)
+    content_scores = (
+        0.4 * nutrition_data['protein'] / (nutrition_data['calories'] + 1) +
+        0.2 * nutrition_data['fiber'] / (nutrition_data['calories'] + 1) -
+        0.2 * nutrition_data['fat'] / (nutrition_data['calories'] + 1) -
+        0.2 * nutrition_data['sugars'] / (nutrition_data['calories'] + 1)
+    )
+    if 'sleep_good' in user and user['sleep_good'] == 0 and 'magnesium' in nutrition_data.columns:
+        content_scores += 0.2 * nutrition_data['magnesium'] / (nutrition_data['magnesium'].max() + 1e-8)
+    collab_scores = (collab_scores - collab_scores.min()) / (collab_scores.max() - collab_scores.min() + 1e-8)
+    content_scores = (content_scores - content_scores.min()) / (content_scores.max() - content_scores.min() + 1e-8)
+    hybrid_scores = alpha * collab_scores + (1 - alpha) * content_scores
+    nutrition_data = nutrition_data.copy()
+    nutrition_data['hybrid_score'] = hybrid_scores
+    nutrition_data = nutrition_data.sort_values('hybrid_score', ascending=False)
+    return nutrition_data

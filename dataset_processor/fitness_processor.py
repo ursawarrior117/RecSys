@@ -29,10 +29,6 @@ def insert_into_postgresql(table_name, file_path, connection):
     required_columns = ["id", "activity_id", "name", "type", "level", "equipment","description","bodypart"]
     data = data[[col for col in required_columns if col in data.columns]]
 
-    # Debug: Print the DataFrame to check its structure
-    print(f"DataFrame for file '{file_path}':")
-    print(data.head())
-
     # Check if the DataFrame is empty
     if data.empty:
         print(f"Skipping file '{file_path}' as it does not contain the required columns.")
