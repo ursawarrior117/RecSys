@@ -1,5 +1,6 @@
 import pandas as pd
 import psycopg2
+from typing import List
 
 # --- CONFIGURATION ---
 CSV_PATH = r"d:\UrsaLa\RecSys\RecSys\data\2021-2023 FNDDS At A Glance - FNDDS Nutrient Values.csv"
@@ -85,6 +86,43 @@ class NutritionDatasetProcessor:
         return data
 
     @staticmethod
-    def preprocess_nutrition_data(data):
-        # Any additional preprocessing steps
-        return data
+    def preprocess_nutrition_data(nutrition_data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Robust preprocessing for nutrition data:
+         - ensure 'food' column exists
+         - coerce numeric cols (calories, protein, fat, carbohydrates)
+         - drop missing food rows
+         - reset index and add stable 'item_id' column for logging/frontend
+        """
+        if nutrition_data is None or not isinstance(nutrition_data, pd.DataFrame):
+            raise ValueError("nutrition_data must be a pandas DataFrame")
+
+        if "food" not in nutrition_data.columns:
+            raise ValueError("nutrition_data must contain a 'food' column")
+
+        # Coerce numeric columns where present
+        for col in ["calories", "protein", "fat", "carbohydrates"]:
+            if col in nutrition_data.columns:
+                nutrition_data[col] = pd.to_numeric(nutrition_data[col], errors="coerce").fillna(0.0)
+
+        # Drop rows missing essential info
+        nutrition_data = nutrition_data.dropna(subset=["food"]).copy()
+
+        # Optional: require positive calories (if calories column exists)
+        if "calories" in nutrition_data.columns:
+            nutrition_data = nutrition_data[nutrition_data["calories"].astype(float) >= 0].copy()
+
+        # Reset index and provide a stable item id used by frontend logging
+        nutrition_data = nutrition_data.reset_index(drop=True)
+        nutrition_data["item_id"] = nutrition_data.index.astype(int)
+
+        return nutrition_data
+
+    @staticmethod
+    def ensure_columns(nutrition_data: pd.DataFrame, required: List[str]) -> pd.DataFrame:
+        """Return a frame that contains at least the requested columns (adds missing as empty)."""
+        df = nutrition_data.copy()
+        for c in required:
+            if c not in df.columns:
+                df[c] = "" if df.shape[0] > 0 and df.dtypes.iloc[0] == object else 0
+        return df
