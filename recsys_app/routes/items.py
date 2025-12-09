@@ -65,14 +65,10 @@ def create_item(payload: dict, db: Session = Depends(get_db)):
             raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/users", response_model=dict)
-def create_user(payload: dict, db: Session = Depends(get_db)):
-    """Create user helper for frontend convenience (proxies to /users)."""
-    user = User(**payload)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return {"id": user.id}
+# Note: user creation is handled by the `users` router. The duplicate
+# helper that previously created users under /api/users was removed to
+# avoid routing conflicts — use the canonical `/users` (or `/api/users`
+# via the CRA proxy) endpoints instead.
 
 
 @router.get("/recommendations/{user_id}")
@@ -133,8 +129,24 @@ def frontend_recommendations(request: Request, user_id: int, top_k: int = 5, db:
         except Exception:
             fitness_recs = fitness_df.head(top_k)
 
-    # Return lists of dicts
+    # Sanitize output: replace NaN/None with safe defaults
+    def sanitize_records(records):
+        sanitized = []
+        for rec in records:
+            clean = {}
+            for k, v in rec.items():
+                if v is None:
+                    clean[k] = 0 if isinstance(v, (int, float)) else ""
+                elif isinstance(v, float) and (v != v or v is None):  # NaN check
+                    clean[k] = 0
+                else:
+                    clean[k] = v
+            sanitized.append(clean)
+        return sanitized
+
+    nutrition_list = nutrition_recs.to_dict(orient="records")
+    fitness_list = fitness_recs.to_dict(orient="records")
     return {
-        "nutrition_items": nutrition_recs.to_dict(orient="records"),
-        "fitness_items": fitness_recs.to_dict(orient="records"),
+        "nutrition_items": sanitize_records(nutrition_list),
+        "fitness_items": sanitize_records(fitness_list),
     }

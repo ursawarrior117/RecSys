@@ -1,5 +1,5 @@
 import os
-import kagglehub
+import kaggle
 import pandas as pd
 import psycopg2
 

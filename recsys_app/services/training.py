@@ -6,6 +6,8 @@ from recsys_app.models.fitness.recommender import FitnessRecommender
 from recsys_app import model_io
 import pandas as pd
 import numpy as np
+import datetime
+from sqlalchemy import func
 
 
 def df_from_query(rows):
@@ -144,3 +146,58 @@ def load_models():
         fit_rec = None
 
     return {"nutrition": nutr_rec, "fitness": fit_rec}
+
+
+def retrain_if_needed(min_new_interactions: int = 100, window_days: int = 7):
+    """Check recent interactions and retrain models if the count exceeds threshold.
+
+    Returns a dict with status and the inspected interaction count.
+    """
+    init_sample_data()
+    db = SessionLocal()
+    try:
+        # If there's no Interaction model, bail out gracefully
+        try:
+            from recsys_app.database.models import Interaction
+        except Exception:
+            return {"status": "no_interaction_table", "count": 0}
+
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=window_days)
+        count = db.query(func.count(Interaction.id)).filter(Interaction.timestamp >= cutoff).scalar() or 0
+        if count >= min_new_interactions:
+            # Record training run start
+            try:
+                from recsys_app.database.models import TrainingRun
+                trun = TrainingRun(model_type='both', started_at=datetime.datetime.utcnow(), status='running')
+                db.add(trun)
+                db.commit()
+                db.refresh(trun)
+            except Exception:
+                trun = None
+
+            # perform a full retrain using recorded interactions
+            started = datetime.datetime.utcnow()
+            try:
+                result = train_and_persist_models(simulate_interactions=False)
+                status = 'ok'
+            except Exception as e:
+                result = {"error": str(e)}
+                status = 'failed'
+            finished = datetime.datetime.utcnow()
+
+            # Update training run record with results
+            try:
+                if trun is not None:
+                    trun.finished_at = finished
+                    trun.status = status
+                    trun.metrics = str(result)
+                    db.add(trun)
+                    db.commit()
+            except Exception:
+                pass
+
+            return {"status": "retrained", "count": int(count), "result": result}
+        else:
+            return {"status": "not_enough_interactions", "count": int(count)}
+    finally:
+        db.close()

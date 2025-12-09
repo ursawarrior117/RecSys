@@ -1,7 +1,7 @@
 """Pydantic schemas for request/response models."""
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 class UserBase(BaseModel):
     age: int
@@ -11,17 +11,26 @@ class UserBase(BaseModel):
     activity_level: str
     health_goals: str
     sleep_good: int
+    # Optional name and external id in base for compatibility
+    name: Optional[str] = None
+    external_id: Optional[str] = None
 
 class UserCreate(UserBase):
-    pass
+    id: Optional[int] = None  # Optional custom numeric ID provided by user
+    # Keep name and external_id optional at schema level so requests
+    # that omit them produce a controlled 400 from the route instead
+    name: Optional[str] = None
+    external_id: Optional[str] = None
 
 class UserResponse(UserBase):
     id: int
+    name: Optional[str] = None
+    external_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class NutritionItemBase(BaseModel):
     food: str
@@ -43,7 +52,7 @@ class NutritionItemResponse(NutritionItemBase):
     id: int
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class FitnessItemBase(BaseModel):
     name: str
@@ -59,8 +68,17 @@ class FitnessItemResponse(FitnessItemBase):
     id: int
     
     class Config:
-        from_attributes = True
+        orm_mode = True
 
 class RecommendationResponse(BaseModel):
     nutrition_items: List[NutritionItemResponse]
     fitness_items: List[FitnessItemResponse]
+    tdee: Optional[float] = None
+    nutrition_goal: Optional[float] = None
+    bmr: Optional[float] = None
+    nutrition_targets: Optional[dict] = None
+    meal_plan: Optional[Dict[str, List[NutritionItemResponse]]] = None
+    # Daily progress summary: total protein/calories in the generated meal_plan
+    daily_protein: Optional[float] = None
+    daily_calories: Optional[float] = None
+    percent_of_goal: Optional[float] = None

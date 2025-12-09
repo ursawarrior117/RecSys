@@ -13,7 +13,7 @@ app = create_app()
 if __name__ == "__main__":
     import uvicorn
     # Run using the local app instance. Use reload in development.
-    uvicorn.run("recommend_api:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("recommend_api:app", host="0.0.0.0", port=8000)
 
 @app.get("/")
 def root():

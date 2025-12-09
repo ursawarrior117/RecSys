@@ -10,6 +10,10 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
+    # Human-readable name for tracking progress (optional for older rows)
+    name = Column(String, nullable=True)
+    # External identifier (string) useful for analytics or client-side tracking
+    external_id = Column(String, nullable=True)
     age = Column(Integer)
     weight = Column(Float)
     height = Column(Float)
@@ -58,4 +62,18 @@ class Interaction(Base):
     nutrition_item_id = Column(Integer, ForeignKey('nutrition_items.id'), nullable=True)
     fitness_item_id = Column(Integer, ForeignKey('fitness_items.id'), nullable=True)
     rating = Column(Float)
+    event_type = Column(String, default='impression')
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+
+class TrainingRun(Base):
+    """Record of a training run and its metrics."""
+    __tablename__ = "training_runs"
+
+    id = Column(Integer, primary_key=True)
+    model_type = Column(String)  # e.g., 'nutrition' or 'fitness' or 'both'
+    version = Column(String, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String, default='running')
+    metrics = Column(String, nullable=True)  # JSON-encoded metrics or brief summary

@@ -21,7 +21,19 @@ def log_interaction(payload: dict, db: Session = Depends(get_db)):
 
     ni = payload.get('nutrition_item_id')
     fi = payload.get('fitness_item_id')
-    rating = float(payload.get('rating', 1.0))
+    event_type = payload.get('event_type', 'impression')
+    # map event types to a numeric rating when provided; rating can override
+    rating = payload.get('rating', None)
+    if rating is None:
+        if event_type == 'accept':
+            rating = 1.0
+        elif event_type == 'click':
+            rating = 0.6
+        elif event_type == 'skip':
+            rating = -0.5
+        else:
+            rating = 0.0
+    rating = float(rating)
 
     if ni is None and fi is None:
         raise HTTPException(status_code=400, detail='nutrition_item_id or fitness_item_id required')
@@ -31,7 +43,7 @@ def log_interaction(payload: dict, db: Session = Depends(get_db)):
     if fi is not None and not db.query(FitnessItem).filter(FitnessItem.id == fi).first():
         raise HTTPException(status_code=404, detail='fitness item not found')
 
-    inter = Interaction(user_id=user_id, nutrition_item_id=ni, fitness_item_id=fi, rating=rating)
+    inter = Interaction(user_id=user_id, nutrition_item_id=ni, fitness_item_id=fi, rating=rating, event_type=event_type)
     db.add(inter)
     db.commit()
     db.refresh(inter)
