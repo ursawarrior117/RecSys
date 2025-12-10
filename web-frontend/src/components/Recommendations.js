@@ -60,23 +60,7 @@ export default function Recommendations({ results, userId, onSelectCallback }) {
     if (onSelectCallback) onSelectCallback(it);
   };
 
-  return (
-    <div>
-      <div>Targets — Calories: {results.nutrition_targets?.calories ?? results.targets?.tdee ?? "n/a"} | Protein: {results.nutrition_targets?.protein_g ?? results.targets?.protein_g ?? "n/a"}</div>
-      <ul>
-        {localItems.map(it => {
-          const id = it.id || it.item_id;
-          const isSelected = id && selectedIds.has(id);
-          return (
-            <li key={id || Math.random()}>
-              {it.food || it.name} - {it.calories ?? it.level ?? ""}
-              <button onClick={() => handleSelect(it)} disabled={isSelected} style={{ marginLeft: 8 }}>
-                {isSelected ? 'Selected' : 'Select'}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
+  // For now, hide the verbose list UI — the main recommendations are used elsewhere.
+  // Returning null keeps the component mounted for impression logging but removes the bulky list from the page.
+  return null;
 }

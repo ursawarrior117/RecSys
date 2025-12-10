@@ -25,12 +25,13 @@ def log_interaction(payload: dict, db: Session = Depends(get_db)):
     # map event types to a numeric rating when provided; rating can override
     rating = payload.get('rating', None)
     if rating is None:
-        if event_type == 'accept':
+        # support new event types: 'like' and 'dislike'
+        if event_type == 'accept' or event_type == 'like':
             rating = 1.0
         elif event_type == 'click':
             rating = 0.6
-        elif event_type == 'skip':
-            rating = -0.5
+        elif event_type == 'skip' or event_type == 'dislike':
+            rating = -1.0 if event_type == 'dislike' else -0.5
         else:
             rating = 0.0
     rating = float(rating)

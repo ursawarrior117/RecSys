@@ -35,6 +35,34 @@ async def get_recommendations(
     nutrition_items = db.query(NutritionItem).all()
     fitness_items = db.query(FitnessItem).all()
     
+    # Query user's persistent dislikes (should never appear in recommendations)
+    # and likes (should preferentially appear)
+    disliked_item_ids = set()
+    liked_item_ids = set()
+    try:
+        dislike_query = db.query(Interaction).filter(
+            Interaction.user_id == user.id,
+            Interaction.nutrition_item_id != None,
+            Interaction.event_type == 'dislike'
+        ).all()
+        for it in dislike_query:
+            if it.nutrition_item_id:
+                disliked_item_ids.add(int(it.nutrition_item_id))
+        
+        like_query = db.query(Interaction).filter(
+            Interaction.user_id == user.id,
+            Interaction.nutrition_item_id != None,
+            Interaction.event_type == 'like'
+        ).all()
+        for it in like_query:
+            if it.nutrition_item_id:
+                liked_item_ids.add(int(it.nutrition_item_id))
+    except Exception:
+        pass
+    
+    # Filter out disliked items from recommendations
+    nutrition_items = [it for it in nutrition_items if it.id not in disliked_item_ids]
+    
     # Convert to pandas DataFrames
     import pandas as pd
     user_df = pd.DataFrame([user.__dict__])
@@ -117,10 +145,53 @@ async def get_recommendations(
     nutr_rec = None  # Initialize to None; may be set below if ML is enabled
     if not DISABLE_ML:
         try:
-            from ..models.nutrition.recommender import NutritionRecommender
-            from ..models.fitness.recommender import FitnessRecommender
-            nutr_rec = NutritionRecommender()
-            fit_rec = FitnessRecommender()
+            # Attempt to load persisted models (if available) to provide real collaborative scores.
+            from recsys_app.services.training import load_models
+            loaded = load_models()
+            nutr_rec = loaded.get('nutrition') if isinstance(loaded, dict) else None
+            fit_rec = loaded.get('fitness') if isinstance(loaded, dict) else None
+            # If loading failed or models are not present, fall back to fresh instances
+            if nutr_rec is None:
+                from ..models.nutrition.recommender import NutritionRecommender
+                nutr_rec = NutritionRecommender()
+            if fit_rec is None:
+                from ..models.fitness.recommender import FitnessRecommender
+                fit_rec = FitnessRecommender()
+            # Fetch user's positive and negative nutrition interactions to inform item-based similarity
+            try:
+                pos_q = db.query(Interaction).filter(
+                    Interaction.user_id == user.id,
+                    Interaction.nutrition_item_id != None
+                )
+                pos_items = []
+                neg_items = []
+                for it in pos_q.all():
+                    # consider explicit accepts/clicks or positive ratings
+                    try:
+                        rated = float(getattr(it, 'rating', 0) or 0)
+                    except Exception:
+                        rated = 0.0
+                    et = getattr(it, 'event_type', None)
+                    if et in ('accept', 'click') or rated > 0:
+                        if it.nutrition_item_id:
+                            pos_items.append(int(it.nutrition_item_id))
+                    # negative signals: explicit 'dislike' or negative rating
+                    if et == 'dislike' or rated < 0:
+                        if it.nutrition_item_id:
+                            neg_items.append(int(it.nutrition_item_id))
+                # attach to recommender instance for use during generate
+                if pos_items:
+                    try:
+                        nutr_rec.user_positive_item_ids = list(set(pos_items))
+                    except Exception:
+                        pass
+                if neg_items:
+                    try:
+                        nutr_rec.user_negative_item_ids = list(set(neg_items))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             # choose stronger content weights when nutrition targets are available
             prot_w = 0.15
             size_w = 0.35
@@ -286,7 +357,8 @@ async def get_recommendations(
             top_k_candidates=80,
             nutrition_targets=nutrition_targets,
             meals_per_day=3,
-            diversity_overlap_threshold=0.5
+            diversity_overlap_threshold=0.5,
+            liked_item_ids=liked_item_ids  # Force liked items into meal plan
         )
         # normalize meal_plan rows to same schema as nutrition items
         meal_plan_output = {}
@@ -317,7 +389,14 @@ async def get_recommendations(
     ).all()
 
     # map event types to base weights and decay parameters
-    EVENT_WEIGHTS = {'accept': 1.0, 'click': 0.6, 'impression': 0.05, 'skip': -0.4}
+    EVENT_WEIGHTS = {
+        'accept': 1.0,
+        'click': 0.6,
+        'like': 1.0,
+        'impression': 0.05,
+        'skip': -0.4,
+        'dislike': -0.8
+    }
     HALF_LIFE_DAYS = 7.0
 
     # build item boost dict (item_id -> cumulative boost)
@@ -338,6 +417,7 @@ async def get_recommendations(
     # Use any model/content score present (e.g., 'hybrid_score') as the base so
     # interactions can add or subtract from a meaningful continuous score.
     LAMBDA_INTERACTION = 4.0
+    LAMBDA_LIKED = 10.0  # Strong boost for explicitly liked items
 
     def _safe_float(v, default=None):
         try:
@@ -351,6 +431,9 @@ async def get_recommendations(
         for idx, item in enumerate(item_list):
             iid = item.get(id_key)
             boost = item_boost.get(iid, 0.0)
+            # Add strong boost for explicitly liked items
+            if iid in liked_item_ids:
+                boost += LAMBDA_LIKED
             base_score = _safe_float(item.get('hybrid_score'), None)
             if base_score is None:
                 # fallback to inverse index so earlier items keep precedence

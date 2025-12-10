@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import Recommendations from "./components/Recommendations";
+import UserForm from "./components/UserForm";
+import { logInteraction as apiLogInteraction } from "./services/api";
 import { deleteUser as apiDeleteUser } from "./services/api";
 
 function App() {
@@ -21,6 +23,9 @@ function App() {
   const [bmr, setBmr] = useState(null);
   const [nutritionTargets, setNutritionTargets] = useState(null);
   const [mealPlan, setMealPlan] = useState(null);
+  const [selectedItemIds, setSelectedItemIds] = useState(new Set());
+  const [likedItemIds, setLikedItemIds] = useState(new Set());
+  const [dislikedItemIds, setDislikedItemIds] = useState(new Set());
   const [loadUserId, setLoadUserId] = useState('');
   const [users, setUsers] = useState([]);
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -208,46 +213,25 @@ function App() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
 
-          {/* Create User Section */}
+          {/* Create User Section (moved to UserForm component) */}
           <div style={cardStyle}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: '1rem', color: '#1f2937' }}>Create New User</h2>
-            <form onSubmit={handleUserFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-              {['age', 'weight', 'height'].map(field => (
-                <div key={field}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 4, color: '#374151' }}>
-                    {field.charAt(0).toUpperCase() + field.slice(1)} {field === 'weight' ? '(kg)' : field === 'height' ? '(cm)' : ''}:
-                  </label>
-                  <input name={field} type="number" value={userForm[field]} onChange={handleUserFormChange} required 
-                    style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }} />
-                </div>
-              ))}
-              {[{ name: 'gender', opts: ['Male', 'Female'] }, { name: 'activity_level', opts: ['Low', 'Medium', 'High'] }].map(sel => (
-                <div key={sel.name}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 4, color: '#374151' }}>
-                    {sel.name.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())}:
-                  </label>
-                  <select name={sel.name} value={userForm[sel.name]} onChange={handleUserFormChange} required
-                    style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }}>
-                    <option value="">Select</option>
-                    {sel.opts.map(o => <option key={o} value={o.toLowerCase()}>{o}</option>)}
-                  </select>
-                </div>
-              ))}
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 4, color: '#374151' }}>Health Goals:</label>
-                <input name="health_goals" type="text" value={userForm.health_goals} onChange={handleUserFormChange} required 
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }} />
-              </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 500, marginBottom: 4, color: '#374151' }}>Sleep Good:</label>
-                <select name="sleep_good" value={userForm.sleep_good} onChange={handleUserFormChange} required
-                  style={{ width: '100%', padding: '0.5rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }}>
-                  <option value={1}>Yes</option>
-                  <option value={0}>No</option>
-                </select>
-              </div>
-              <button type="submit" style={buttonPrimaryStyle}>Create User</button>
-            </form>
+            <UserForm onResults={async (data, uid) => {
+              if (uid) {
+                setUserId(uid);
+                setUserCreated(true);
+                // if component provided recommendations data, set it; otherwise leave to Get Recommendations button
+                if (data) {
+                  setRecommendations(data);
+                  setTdee(data.tdee ?? null);
+                  setNutritionGoal(data.nutrition_goal ?? null);
+                  setBmr(data.bmr ?? null);
+                  if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
+                  if (data.meal_plan) setMealPlan(data.meal_plan);
+                }
+                // refresh user listing
+                fetchUsers(0);
+              }
+            }} />
           </div>
 
           {/* Load User Section */}
@@ -394,15 +378,92 @@ function App() {
                                       {it.tags ? ` • ${it.tags}` : ''}
                                     </div>
                                   </div>
-                                  <div style={{ textAlign: 'right', fontSize: 12, color: '#333' }}>
-                                    <div>{Math.round(Number(it.calories || 0))} kcal</div>
-                                    <div style={{ fontSize: 11, color: '#666' }}>{Math.round(Number(it.protein || 0))} g protein</div>
-                                  </div>
+                                      <div style={{ textAlign: 'right', fontSize: 12, color: '#333' }}>
+                                        <div>{Math.round(Number(it.calories || 0))} kcal</div>
+                                        <div style={{ fontSize: 11, color: '#666' }}>{Math.round(Number(it.protein || 0))} g protein</div>
+                                      </div>
                                 </div>
                                 <div style={{ marginTop: 6, fontSize: 12, color: '#444' }}>
                                   <span style={{ marginRight: 10 }}>Carbs: {Math.round(Number(it.carbohydrates || it.carbs_g || 0))} g</span>
                                   <span>Fat: {Math.round(Number(it.fat || 0))} g</span>
                                 </div>
+                                    <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                      <button
+                                        onClick={async () => {
+                                          const nid = it.id || it.item_id || null;
+                                          if (!nid) return;
+                                          if (!userCreated) {
+                                            alert('Create or load a user before interacting');
+                                            return;
+                                          }
+                                          // optimistic UI: mark liked
+                                          setLikedItemIds(prev => {
+                                            const next = new Set(prev);
+                                            next.add(nid);
+                                            return next;
+                                          });
+                                          // ensure disliked state is cleared locally
+                                          setDislikedItemIds(prev => {
+                                            const next = new Set(prev);
+                                            next.delete(nid);
+                                            return next;
+                                          });
+                                          try {
+                                            await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'like' });
+                                            // refresh recommendations to reflect CF signal
+                                            await getRecommendationsForUser(userId);
+                                          } catch (e) {
+                                            console.error('Failed to log like interaction', e);
+                                            setLikedItemIds(prev => {
+                                              const next = new Set(prev);
+                                              next.delete(nid);
+                                              return next;
+                                            });
+                                            alert('Failed to record like');
+                                          }
+                                        }}
+                                        disabled={likedItemIds.has(it.id || it.item_id)}
+                                        style={{ marginTop: 6, padding: '0.3rem 0.6rem', borderRadius: 4, background: likedItemIds.has(it.id || it.item_id) ? '#d1fae5' : undefined }}
+                                      >{likedItemIds.has(it.id || it.item_id) ? 'Liked' : 'Like'}</button>
+
+                                      <button
+                                        onClick={async () => {
+                                          const nid = it.id || it.item_id || null;
+                                          if (!nid) return;
+                                          if (!userCreated) {
+                                            alert('Create or load a user before interacting');
+                                            return;
+                                          }
+                                          // optimistic UI: mark disliked
+                                          setDislikedItemIds(prev => {
+                                            const next = new Set(prev);
+                                            next.add(nid);
+                                            return next;
+                                          });
+                                          // ensure liked state is cleared locally
+                                          setLikedItemIds(prev => {
+                                            const next = new Set(prev);
+                                            next.delete(nid);
+                                            return next;
+                                          });
+                                          try {
+                                            await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'dislike' });
+                                            // refresh recommendations to reflect CF signal
+                                            await getRecommendationsForUser(userId);
+                                          } catch (e) {
+                                            console.error('Failed to log dislike interaction', e);
+                                            setDislikedItemIds(prev => {
+                                              const next = new Set(prev);
+                                              next.delete(nid);
+                                              return next;
+                                            });
+                                            alert('Failed to record dislike');
+                                          }
+                                        }}
+                                        disabled={dislikedItemIds.has(it.id || it.item_id)}
+                                        style={{ marginTop: 6, padding: '0.3rem 0.6rem', borderRadius: 4, background: dislikedItemIds.has(it.id || it.item_id) ? '#fee2e2' : undefined }}
+                                      >{dislikedItemIds.has(it.id || it.item_id) ? 'Disliked' : 'Dislike'}</button>
+                                    </div>
                               </li>
                             ))}
                           </ul>

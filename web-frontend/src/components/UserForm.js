@@ -30,13 +30,11 @@ export default function UserForm({ onResults }) {
     setError("");
     setLoading(true);
     try {
-      if (!createForm.name || !createForm.external_id) {
-        throw new Error('Please provide both Name and External ID');
-      }
+      // Name is optional (backend auto-generates if missing); External ID auto-generated
       const userData = {
         id: createForm.id ? parseInt(createForm.id) : undefined,
-        name: createForm.name,
-        external_id: createForm.external_id,
+        name: createForm.name || undefined,  // send if provided, else let backend auto-generate
+        external_id: createForm.external_id || undefined,
         age: parseInt(createForm.age),
         weight: parseFloat(createForm.weight),
         height: parseInt(createForm.height),
@@ -47,9 +45,23 @@ export default function UserForm({ onResults }) {
       };
       const newUser = await createUser(userData);
       setError("");
-      alert(`User created with ID: ${newUser.id}`);
+      alert(`User created with ID: ${newUser.id} and Name: ${newUser.name}`);
       setRecForm({ ...recForm, user_id: newUser.id });
       await loadUsersList();
+      // notify parent (App) that a user was created so it can set active user state
+      try {
+        if (typeof onResults === 'function') {
+          // no recommendations yet, so pass null for data and uid for user id
+          onResults(null, newUser.id);
+        }
+      } catch (e) {
+        // ignore callback failures
+      }
+      // reset form
+      setCreateForm({
+        id: "", name: "", external_id: "", age: 30, weight: 75, height: 175, gender: "M",
+        activity_level: "medium", health_goals: "MG", sleep_good: "Yes"
+      });
     } catch (e) {
       setError(`Failed to create user: ${e.message}`);
     } finally {
@@ -124,11 +136,11 @@ export default function UserForm({ onResults }) {
             <input type="number" name="id" value={createForm.id} onChange={handleCreateChange} placeholder="Leave empty for auto-ID" />
         </div>
           <div>
-            <label>Name: </label>
-            <input type="text" name="name" value={createForm.name} onChange={handleCreateChange} placeholder="Full name or username" />
+            <label>Name (optional, auto-generated if blank): </label>
+            <input type="text" name="name" value={createForm.name} onChange={handleCreateChange} placeholder="e.g., Alice, Bob, etc." />
           </div>
           <div>
-            <label>External ID: </label>
+            <label>External ID (optional, auto-generated if blank): </label>
             <input type="text" name="external_id" value={createForm.external_id} onChange={handleCreateChange} placeholder="e.g., email or client id" />
           </div>
         <div>
@@ -185,21 +197,7 @@ export default function UserForm({ onResults }) {
         <button style={{ marginLeft: '8px', background: '#d9534f', color: 'white' }} onClick={handleClearAllUsers} disabled={loading}>Clear All Users</button>
       </div>
 
-      <div>
-        <h3>Get Recommendations</h3>
-        <div>
-          <label>Item Type: </label>
-          <select name="item_type" value={recForm.item_type} onChange={handleRecChange}>
-            <option value="nutrition">Nutrition</option>
-            <option value="fitness">Fitness</option>
-          </select>
-        </div>
-        <div>
-          <label>Top K: </label>
-          <input type="number" name="top_k" value={recForm.top_k} onChange={handleRecChange} />
-        </div>
-        <button onClick={handleFetchRecommendations} disabled={loading || !recForm.user_id}>Get Recommendations</button>
-      </div>
+      {/* Recommendations are fetched via the main App controls — remove duplicate UI here. */}
     </div>
   );
 }

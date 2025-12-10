@@ -8,7 +8,8 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
                                      size_penalty_weight: float = 0.35,
                                      size_threshold_frac: float = 0.4,
                                      meals_per_day: int = 3,
-                                     diversity_overlap_threshold: float = 0.4):
+                                     diversity_overlap_threshold: float = 0.4,
+                                     sim_strength: float = 0.5):
     """Generate hybrid nutrition recommendations combining collaborative and content-based filtering."""
     # Try collaborative predictions, but fall back to content-only if the recommender
     # or its preprocessors are not ready (e.g., not fitted or no model loaded).
@@ -33,6 +34,78 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
     # Normalize scores
     collab_scores = (collab_scores - collab_scores.min()) / (collab_scores.max() - collab_scores.min() + 1e-8)
     content_scores = (content_scores - content_scores.min()) / (content_scores.max() - content_scores.min() + 1e-8)
+
+    # If the recommender provides positive/negative item ids and item preprocessors,
+    # compute an item-based similarity signal and blend it into the content score.
+    try:
+        if recommender is not None and hasattr(recommender, 'item_preprocessor') and (
+            getattr(recommender, 'user_positive_item_ids', None) or getattr(recommender, 'user_negative_item_ids', None)
+        ):
+            try:
+                # Prepare item vectors using recommender's item_feature_cols
+                cols = getattr(recommender, 'item_feature_cols', None)
+                if cols is not None:
+                    nd = nutrition_data.copy()
+                    for c in cols:
+                        if c not in nd.columns:
+                            nd[c] = 0
+                    # transform if possible
+                    item_vecs = recommender.item_preprocessor.transform(nd[cols])
+                    norms = np.linalg.norm(item_vecs, axis=1, keepdims=True) + 1e-8
+                    item_vecs_norm = item_vecs / norms
+
+                    id_list = list(nutrition_data['id'].tolist()) if 'id' in nutrition_data.columns else None
+                    pos_idx = []
+                    neg_idx = []
+                    if getattr(recommender, 'user_positive_item_ids', None) and id_list is not None:
+                        pos_idx = [id_list.index(pid) for pid in recommender.user_positive_item_ids if pid in id_list]
+                    if getattr(recommender, 'user_negative_item_ids', None) and id_list is not None:
+                        neg_idx = [id_list.index(pid) for pid in recommender.user_negative_item_ids if pid in id_list]
+
+                    sim_scores = np.zeros(len(item_vecs_norm))
+                    sim_neg = np.zeros(len(item_vecs_norm))
+                    if len(pos_idx) > 0:
+                        for i in range(len(item_vecs_norm)):
+                            sims = item_vecs_norm[pos_idx] @ item_vecs_norm[i]
+                            sim_scores[i] = np.max(sims) if len(sims) > 0 else 0.0
+                    if len(neg_idx) > 0:
+                        for i in range(len(item_vecs_norm)):
+                            sims = item_vecs_norm[neg_idx] @ item_vecs_norm[i]
+                            sim_neg[i] = np.max(sims) if len(sims) > 0 else 0.0
+
+                    # normalize sim signals
+                    if sim_scores.size > 0:
+                        smin, smax = sim_scores.min(), sim_scores.max()
+                        if smax > smin:
+                            sim_scores = (sim_scores - smin) / (smax - smin)
+                        else:
+                            sim_scores = np.zeros_like(sim_scores)
+                    if sim_neg.size > 0:
+                        nmin, nmax = sim_neg.min(), sim_neg.max()
+                        if nmax > nmin:
+                            sim_neg = (sim_neg - nmin) / (nmax - nmin)
+                        else:
+                            sim_neg = np.zeros_like(sim_neg)
+
+                    # combine positive and negative similarity into a single effect
+                    negative_penalty = 0.8
+                    sim_effect = sim_scores - negative_penalty * sim_neg
+                    # blend sim_effect into content_scores
+                    # ensure sim_effect scaled to 0..1 like content_scores
+                    if sim_effect.size > 0:
+                        se_min, se_max = sim_effect.min(), sim_effect.max()
+                        if se_max > se_min:
+                            sim_effect = (sim_effect - se_min) / (se_max - se_min)
+                        else:
+                            sim_effect = np.zeros_like(sim_effect)
+                        # mix into content scores
+                        content_scores = (content_scores + sim_strength * sim_effect)
+                        # renormalize content_scores
+                        content_scores = (content_scores - content_scores.min()) / (content_scores.max() - content_scores.min() + 1e-8)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # If nutrition targets (daily goals) are provided, nudge content scores
     if nutrition_targets is not None:
@@ -172,7 +245,7 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
 
 def generate_daily_meal_plan(user: dict, nutrition_data: pd.DataFrame, recommender, meals=['Breakfast', 'Lunch', 'Dinner'],
                              items_per_meal: int = 1, top_k_candidates: int = 60, nutrition_targets: dict = None,
-                             meals_per_day: int = 3, diversity_overlap_threshold: float = 0.5):
+                             meals_per_day: int = 3, diversity_overlap_threshold: float = 0.5, liked_item_ids: set = None):
     """Create a simple daily meal plan composed of items that together aim to meet daily protein targets.
 
     Strategy (greedy with category diversity):
@@ -257,10 +330,20 @@ def generate_daily_meal_plan(user: dict, nutrition_data: pd.DataFrame, recommend
 
     # rank candidates by calories first (to fill daily goal), then protein-to-calorie ratio
     # This ensures we select calorie-dense items while maintaining protein balance
+    # If liked_item_ids provided, prioritize them in ranking
     def rank_candidates(avail):
-        return sorted(avail,
-                      key=lambda x: (x.get('calories_val', 0.0), x.get('protein_val', 0.0) / (x.get('calories_val', 1.0) + 1e-8), x.get('hybrid_score', 0.0)),
-                      reverse=True)
+        if liked_item_ids:
+            return sorted(avail,
+                          key=lambda x: (
+                              x.get('id') not in liked_item_ids,  # False (liked) sorts before True (not liked)
+                              -x.get('calories_val', 0.0),  # negate for descending
+                              -x.get('protein_val', 0.0) / (x.get('calories_val', 1.0) + 1e-8),
+                              -x.get('hybrid_score', 0.0)
+                          ))
+        else:
+            return sorted(avail,
+                          key=lambda x: (x.get('calories_val', 0.0), x.get('protein_val', 0.0) / (x.get('calories_val', 1.0) + 1e-8), x.get('hybrid_score', 0.0)),
+                          reverse=True)
 
     # maximum items per meal hard cap to avoid runaway plans
     # Use items_per_meal to set a reasonable cap (usually 2-4 items per meal)

@@ -82,8 +82,84 @@ def train_and_persist_models(simulate_interactions: bool = True):
                 nutr_interactions = np.random.randint(0, 2, size=(U, I_n))
                 fit_interactions = np.random.randint(0, 2, size=(U, I_f)) if I_f > 0 else None
 
+        # If we have recorded interactions, perform a small train/test holdout
+        eval_metrics = None
         if nutr_interactions is not None:
-            nutr_rec.train(users_df, nutrition_df, nutr_interactions)
+            # create train/test matrices: hold out one positive item per user when possible
+            train_mat = nutr_interactions.copy()
+            test_mat = np.zeros_like(nutr_interactions)
+            rng = np.random.RandomState(42)
+            users_for_eval = []
+            id_to_n = {nid: idx for idx, nid in enumerate(nut_ids)}
+            idx_to_itemid = {idx: nid for idx, nid in enumerate(nut_ids)}
+            for u in range(U):
+                pos = np.where(nutr_interactions[u] > 0)[0]
+                if len(pos) >= 2:
+                    hold = rng.choice(pos)
+                    train_mat[u, hold] = 0
+                    test_mat[u, hold] = 1
+                    users_for_eval.append(u)
+
+            # train on the train_mat
+            nutr_rec.train(users_df, nutrition_df, train_mat)
+
+            # Evaluate recommendations using the held-out test items
+            def precision_at_k(recommended_ids, relevant_set, k):
+                if k <= 0:
+                    return 0.0
+                hits = sum(1 for rid in recommended_ids[:k] if rid in relevant_set)
+                return hits / float(k)
+
+            def recall_at_k(recommended_ids, relevant_set, k):
+                if len(relevant_set) == 0:
+                    return 0.0
+                hits = sum(1 for rid in recommended_ids[:k] if rid in relevant_set)
+                return hits / float(len(relevant_set))
+
+            def ndcg_at_k(recommended_ids, relevant_set, k):
+                dcg = 0.0
+                for i, rid in enumerate(recommended_ids[:k]):
+                    rel = 1.0 if rid in relevant_set else 0.0
+                    denom = np.log2(i + 2)
+                    dcg += (2**rel - 1) / denom
+                ideal_rels = [1.0] * min(len(relevant_set), k)
+                idcg = sum((2**r - 1) / np.log2(i + 2) for i, r in enumerate(ideal_rels))
+                return dcg / idcg if idcg > 0 else 0.0
+
+            K = 10
+            precisions = []
+            recalls = []
+            ndcgs = []
+            for u in users_for_eval:
+                user_row = users_df.iloc[u].to_dict()
+                try:
+                    recs = nutr_rec.generate_recommendations(user_row, top_k=K)
+                except Exception:
+                    continue
+                # recommended ids (assumes 'id' column present)
+                rec_ids = [int(x) for x in recs['id'].tolist() if 'id' in recs.columns]
+                rel_idxs = np.where(test_mat[u] > 0)[0]
+                relevant_ids = set(idx_to_itemid[i] for i in rel_idxs)
+                if len(relevant_ids) == 0:
+                    continue
+                precisions.append(precision_at_k(rec_ids, relevant_ids, K))
+                recalls.append(recall_at_k(rec_ids, relevant_ids, K))
+                ndcgs.append(ndcg_at_k(rec_ids, relevant_ids, K))
+
+            if len(precisions) > 0:
+                eval_metrics = {
+                    'precision_at_10': float(np.mean(precisions)),
+                    'recall_at_10': float(np.mean(recalls)),
+                    'ndcg_at_10': float(np.mean(ndcgs)),
+                    'evaluated_users': int(len(precisions))
+                }
+            else:
+                eval_metrics = {'precision_at_10': 0.0, 'recall_at_10': 0.0, 'ndcg_at_10': 0.0, 'evaluated_users': 0}
+        else:
+            # No recorded interactions -> train on simulated or provided interactions
+            if nutr_interactions is not None:
+                nutr_rec.train(users_df, nutrition_df, nutr_interactions)
+
         if fit_interactions is not None and not fitness_df.empty:
             fit_rec.train(users_df, fitness_df, fit_interactions)
 
@@ -104,7 +180,10 @@ def train_and_persist_models(simulate_interactions: bool = True):
             except Exception:
                 pass
 
-        return {"status": "ok", "models": model_io.list_models()}
+        result = {"status": "ok", "models": model_io.list_models()}
+        if eval_metrics is not None:
+            result['eval_metrics'] = eval_metrics
+        return result
 
     finally:
         db.close()

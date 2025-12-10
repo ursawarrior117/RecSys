@@ -39,27 +39,31 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
     ensure_user_columns(db)
 
     user_dict = user.dict()
-    # Debug log to help diagnose client payload issues (can be removed later)
-    try:
-        print(f"[CREATE_USER] payload: {user_dict}")
-    except Exception:
-        pass
     custom_id = user_dict.pop('id', None)
 
     name = user_dict.get('name')
     external_id = user_dict.get('external_id')
-    # If client didn't provide name/external_id (old frontend), auto-generate
-    if not name:
+    
+    # Auto-generate name if missing (allows old UI to create users)
+    if not name or not name.strip():
         name = f"user_{int(time.time())}_{random.randint(100,999)}"
         user_dict['name'] = name
-    if not external_id:
+    
+    # Auto-generate external_id if not provided
+    if not external_id or not external_id.strip():
         external_id = f"ext_{int(time.time())}_{random.randint(100,999)}"
         user_dict['external_id'] = external_id
+    
+    user_dict['name'] = name.strip()
 
-    # Check uniqueness: no existing user with same name or external_id
-    existing = db.query(User).filter(or_(User.name == name, User.external_id == external_id)).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="User with same name or external_id already exists")
+    # Check uniqueness: name must be unique, external_id must be unique
+    existing_name = db.query(User).filter(User.name == user_dict['name']).first()
+    if existing_name:
+        raise HTTPException(status_code=400, detail=f"Name '{user_dict['name']}' already exists. Please use a unique name.")
+    
+    existing_external = db.query(User).filter(User.external_id == external_id).first()
+    if existing_external:
+        raise HTTPException(status_code=400, detail="External ID already exists")
 
     db_user = User(**user_dict)
     if custom_id is not None:
@@ -73,6 +77,24 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
     db.refresh(db_user)
     return db_user
+
+
+@router.delete("/clear")
+def clear_all_users(db: Session = Depends(get_db)):
+    """Delete ALL users and their interactions. Use with caution."""
+    from ..database.models import Interaction
+
+    try:
+        # remove interactions first
+        deleted_interactions = db.query(Interaction).delete()
+        # then remove users
+        deleted_users = db.query(User).delete()
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"status": "cleared", "deleted_users": deleted_users, "deleted_interactions": deleted_interactions}
 
 
 @router.delete("/{user_id}")
@@ -99,24 +121,6 @@ def delete_user(user_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "deleted", "id": user_id}
-
-
-@router.delete("/clear")
-def clear_all_users(db: Session = Depends(get_db)):
-    """Delete ALL users and their interactions. Use with caution."""
-    from ..database.models import Interaction
-
-    try:
-        # remove interactions first
-        deleted_interactions = db.query(Interaction).delete()
-        # then remove users
-        deleted_users = db.query(User).delete()
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-    return {"status": "cleared", "deleted_users": deleted_users, "deleted_interactions": deleted_interactions}
 
 @router.get("", response_model=List[UserResponse])
 @router.get("/", response_model=List[UserResponse])
