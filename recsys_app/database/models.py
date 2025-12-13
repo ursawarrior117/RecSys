@@ -22,6 +22,8 @@ class User(Base):
     health_goals = Column(String)
     sleep_good = Column(Integer)
     tdee = Column(Float)
+    # Dietary restrictions: comma-separated string (e.g., "vegetarian,gluten-free,dairy-free")
+    dietary_restrictions = Column(String, nullable=True, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -41,6 +43,10 @@ class NutritionItem(Base):
     sodium = Column(Float)
     magnesium = Column(Float)
     caffeine = Column(Float)
+    # Dietary tags: comma-separated (e.g., "vegetarian,gluten-free,high-protein")
+    dietary_tags = Column(String, nullable=True, default="")
+    # Meal context: which meal(s) it suits ("breakfast", "lunch", "dinner", or comma-separated)
+    meal_context = Column(String, nullable=True, default="")
 
 class FitnessItem(Base):
     """Fitness item model for storing exercise data."""

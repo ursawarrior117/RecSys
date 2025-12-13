@@ -14,6 +14,8 @@ class UserBase(BaseModel):
     # Optional name and external id in base for compatibility
     name: Optional[str] = None
     external_id: Optional[str] = None
+    # Dietary restrictions: comma-separated string
+    dietary_restrictions: Optional[str] = None
 
 class UserCreate(UserBase):
     id: Optional[int] = None  # Optional custom numeric ID provided by user
@@ -21,11 +23,13 @@ class UserCreate(UserBase):
     # that omit them produce a controlled 400 from the route instead
     name: Optional[str] = None
     external_id: Optional[str] = None
+    dietary_restrictions: Optional[str] = None
 
 class UserResponse(UserBase):
     id: int
     name: Optional[str] = None
     external_id: Optional[str] = None
+    dietary_restrictions: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     

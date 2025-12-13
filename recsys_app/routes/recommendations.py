@@ -23,23 +23,84 @@ router = APIRouter()
 async def get_recommendations(
     user_id: int,
     db: Session = Depends(get_db),
-    top_k: int = 5
+    top_k: int = 5,
+    rec_type: str = "all",
+    bodypart: str = None
 ):
-    """Get personalized recommendations for a user."""
+    """Get personalized recommendations for a user.
+    
+    Args:
+        user_id: User ID
+        top_k: Number of recommendations
+        rec_type: 'nutrition', 'fitness', or 'all' (default)
+        bodypart: Filter fitness by body part (e.g., 'chest', 'legs', 'back')
+    """
+    # Validate rec_type
+    if rec_type not in ('nutrition', 'fitness', 'all'):
+        rec_type = 'all'
+    
+    print(f'[RECOMMENDATION] User {user_id}, rec_type={rec_type}, bodypart={bodypart}')
+    
     # Get user
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     
     # Get items from database
-    nutrition_items = db.query(NutritionItem).all()
-    fitness_items = db.query(FitnessItem).all()
+    nutrition_items = db.query(NutritionItem).all() if rec_type in ('nutrition', 'all') else []
+    fitness_items = db.query(FitnessItem).all() if rec_type in ('fitness', 'all') else []
+    
+    # Filter fitness items by body part if specified
+    if bodypart and fitness_items:
+        bodypart_lower = bodypart.strip().lower()
+        fitness_items = [it for it in fitness_items if bodypart_lower in (getattr(it, 'bodypart', '') or '').lower()]
+        print(f'[RECOMMENDATION] Filtered fitness to {len(fitness_items)} items for bodypart={bodypart}')
+    
+    # **Filter by dietary restrictions**
+    user_restrictions = set()
+    try:
+        if user.dietary_restrictions:
+            user_restrictions = set(r.strip().lower() for r in user.dietary_restrictions.split(',') if r.strip())
+    except Exception:
+        pass
+    
+    # Filter out items that conflict with user restrictions
+    if user_restrictions:
+        filtered_items = []
+        for it in nutrition_items:
+            item_tags = set()
+            try:
+                if getattr(it, 'dietary_tags', None):
+                    item_tags = set(t.strip().lower() for t in it.dietary_tags.split(',') if t.strip())
+            except Exception:
+                pass
+            # Keep item if no restriction conflict (conservative: keep by default)
+            # Only exclude if item is explicitly marked incompatible
+            # Example: if user is "vegetarian" and item is "not-vegetarian", exclude
+            should_exclude = False
+            if "vegetarian" in user_restrictions and "meat" in item_tags:
+                should_exclude = True
+            if "vegan" in user_restrictions and any(t in item_tags for t in ["meat", "dairy", "eggs"]):
+                should_exclude = True
+            if "gluten-free" in user_restrictions and "gluten" in item_tags:
+                should_exclude = True
+            if "dairy-free" in user_restrictions and "dairy" in item_tags:
+                should_exclude = True
+            if "nut-free" in user_restrictions and "nuts" in item_tags:
+                should_exclude = True
+            if not should_exclude:
+                filtered_items.append(it)
+        nutrition_items = filtered_items
     
     # Query user's persistent dislikes (should never appear in recommendations)
     # and likes (should preferentially appear)
-    disliked_item_ids = set()
-    liked_item_ids = set()
+    disliked_nutrition_ids = set()
+    liked_nutrition_ids = set()
+    disliked_fitness_ids = set()
+    liked_fitness_ids = set()
+    
     try:
+        # Nutrition dislikes
         dislike_query = db.query(Interaction).filter(
             Interaction.user_id == user.id,
             Interaction.nutrition_item_id != None,
@@ -47,8 +108,9 @@ async def get_recommendations(
         ).all()
         for it in dislike_query:
             if it.nutrition_item_id:
-                disliked_item_ids.add(int(it.nutrition_item_id))
+                disliked_nutrition_ids.add(int(it.nutrition_item_id))
         
+        # Nutrition likes
         like_query = db.query(Interaction).filter(
             Interaction.user_id == user.id,
             Interaction.nutrition_item_id != None,
@@ -56,12 +118,70 @@ async def get_recommendations(
         ).all()
         for it in like_query:
             if it.nutrition_item_id:
-                liked_item_ids.add(int(it.nutrition_item_id))
+                liked_nutrition_ids.add(int(it.nutrition_item_id))
+        
+        # Fitness dislikes
+        fit_dislike_query = db.query(Interaction).filter(
+            Interaction.user_id == user.id,
+            Interaction.fitness_item_id != None,
+            Interaction.event_type == 'dislike'
+        ).all()
+        for it in fit_dislike_query:
+            if it.fitness_item_id:
+                disliked_fitness_ids.add(int(it.fitness_item_id))
+        
+        # Fitness likes
+        fit_like_query = db.query(Interaction).filter(
+            Interaction.user_id == user.id,
+            Interaction.fitness_item_id != None,
+            Interaction.event_type == 'like'
+        ).all()
+        for it in fit_like_query:
+            if it.fitness_item_id:
+                liked_fitness_ids.add(int(it.fitness_item_id))
+    except Exception:
+        pass
+    
+    # **Compute user-based collaborative filtering: find similar users and their liked items**
+    similar_user_likes = set()
+    try:
+        all_users = db.query(User).all()
+        user_attrs = (user.age, user.weight, user.height, user.activity_level, user.health_goals)
+        user_dists = []
+        for other_user in all_users:
+            if other_user.id == user.id:
+                continue
+            other_attrs = (other_user.age, other_user.weight, other_user.height, other_user.activity_level, other_user.health_goals)
+            # Compute simple Euclidean distance (normalize numeric attrs)
+            try:
+                age_sim = 1.0 / (1.0 + abs(user_attrs[0] - other_attrs[0]) / 10.0)
+                weight_sim = 1.0 / (1.0 + abs(user_attrs[1] - other_attrs[1]) / 20.0)
+                height_sim = 1.0 / (1.0 + abs(user_attrs[2] - other_attrs[2]) / 10.0)
+                activity_match = 1.0 if user_attrs[3] == other_attrs[3] else 0.5
+                goal_match = 1.0 if user_attrs[4] == other_attrs[4] else 0.5
+                similarity = (age_sim + weight_sim + height_sim + activity_match + goal_match) / 5.0
+                if similarity > 0.6:  # Threshold for "similar" user
+                    user_dists.append((similarity, other_user.id))
+            except Exception:
+                pass
+        
+        # Get liked items from top 3 similar users
+        user_dists.sort(reverse=True)
+        for _, sim_user_id in user_dists[:3]:
+            likes = db.query(Interaction).filter(
+                Interaction.user_id == sim_user_id,
+                Interaction.nutrition_item_id != None,
+                Interaction.event_type == 'like'
+            ).all()
+            for like_it in likes:
+                if like_it.nutrition_item_id:
+                    similar_user_likes.add(int(like_it.nutrition_item_id))
     except Exception:
         pass
     
     # Filter out disliked items from recommendations
-    nutrition_items = [it for it in nutrition_items if it.id not in disliked_item_ids]
+    nutrition_items = [it for it in nutrition_items if it.id not in disliked_nutrition_ids]
+    fitness_items = [it for it in fitness_items if it.id not in disliked_fitness_ids]
     
     # Convert to pandas DataFrames
     import pandas as pd
@@ -143,20 +263,19 @@ async def get_recommendations(
     nutrition_recs = None
     fitness_recs = None
     nutr_rec = None  # Initialize to None; may be set below if ML is enabled
-    if not DISABLE_ML:
+    fit_rec = None
+    
+    # Only generate nutrition recommendations if needed
+    if rec_type in ('nutrition', 'all') and not DISABLE_ML:
         try:
             # Attempt to load persisted models (if available) to provide real collaborative scores.
             from recsys_app.services.training import load_models
             loaded = load_models()
             nutr_rec = loaded.get('nutrition') if isinstance(loaded, dict) else None
-            fit_rec = loaded.get('fitness') if isinstance(loaded, dict) else None
             # If loading failed or models are not present, fall back to fresh instances
             if nutr_rec is None:
                 from ..models.nutrition.recommender import NutritionRecommender
                 nutr_rec = NutritionRecommender()
-            if fit_rec is None:
-                from ..models.fitness.recommender import FitnessRecommender
-                fit_rec = FitnessRecommender()
             # Fetch user's positive and negative nutrition interactions to inform item-based similarity
             try:
                 pos_q = db.query(Interaction).filter(
@@ -209,7 +328,6 @@ async def get_recommendations(
                 size_penalty_weight=size_w,
                 meals_per_day=3
             )
-            fitness_recs = fit_rec.generate_recommendations(user_df.iloc[0].to_dict(), top_k=top_k)
         except Exception:
             # Fall back to content-only scoring if models or TF aren't available
             try:
@@ -228,25 +346,57 @@ async def get_recommendations(
                 )
             except Exception:
                 nutrition_recs = nutrition_df.sort_values('protein', ascending=False).head(top_k)
-            fitness_recs = fitness_df.head(top_k)
-    else:
-        # ML disabled by environment variable — use content-only fallback
+    
+    # Only generate fitness recommendations if needed
+    if rec_type in ('fitness', 'all') and not DISABLE_ML:
         try:
-            prot_w = 0.30
-            size_w = 0.35
-            if nutrition_targets and nutrition_targets.get('calories'):
-                prot_w = 0.6
-                size_w = 0.5
-            nutrition_recs = hybrid_nutrition_recommendations(
-                user_df.iloc[0].to_dict(), nutrition_df, None, top_k=top_k,
-                alpha=alpha,
-                nutrition_targets=nutrition_targets,
-                prot_boost_weight=prot_w,
-                size_penalty_weight=size_w,
-                meals_per_day=3
-            )
+            from recsys_app.services.training import load_models
+            loaded = load_models()
+            fit_rec = loaded.get('fitness') if isinstance(loaded, dict) else None
+            # If loading failed or models are not present, fall back to fresh instances
+            if fit_rec is None:
+                from ..models.fitness.recommender import FitnessRecommender
+                fit_rec = FitnessRecommender()
+            # Fetch user's positive and negative fitness interactions
+            try:
+                fit_q = db.query(Interaction).filter(
+                    Interaction.user_id == user.id,
+                    Interaction.fitness_item_id != None
+                )
+                fit_pos_items = []
+                fit_neg_items = []
+                for it in fit_q.all():
+                    # consider explicit accepts/clicks or positive ratings
+                    try:
+                        rated = float(getattr(it, 'rating', 0) or 0)
+                    except Exception:
+                        rated = 0.0
+                    et = getattr(it, 'event_type', None)
+                    if et in ('accept', 'click') or rated > 0:
+                        if it.fitness_item_id:
+                            fit_pos_items.append(int(it.fitness_item_id))
+                    # negative signals: explicit 'dislike' or negative rating
+                    if et == 'dislike' or rated < 0:
+                        if it.fitness_item_id:
+                            fit_neg_items.append(int(it.fitness_item_id))
+                # attach to recommender instance for use during generate
+                if fit_pos_items:
+                    try:
+                        fit_rec.user_positive_item_ids = list(set(fit_pos_items))
+                    except Exception:
+                        pass
+                if fit_neg_items:
+                    try:
+                        fit_rec.user_negative_item_ids = list(set(fit_neg_items))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            fitness_recs = fit_rec.generate_recommendations(user_df.iloc[0].to_dict(), top_k=top_k)
         except Exception:
-            nutrition_recs = nutrition_df.sort_values('protein', ascending=False).head(top_k)
+            fitness_recs = fitness_df.head(top_k)
+    elif rec_type in ('fitness', 'all'):
+        # ML disabled — use content-only fallback
         fitness_recs = fitness_df.head(top_k)
     
     # Convert DataFrames to plain dicts matching the response schema
@@ -283,7 +433,7 @@ async def get_recommendations(
 
 
     def _normalize_fit(row):
-        keys = ['id', 'name', 'type', 'level', 'equipment', 'bodypart']
+        keys = ['id', 'name', 'type', 'level', 'equipment', 'bodypart', 'hybrid_score']
         out = {}
         for k in keys:
             v = row.get(k) if isinstance(row, dict) else row.get(k, None)
@@ -344,39 +494,67 @@ async def get_recommendations(
             except Exception:
                 pass
 
-    # Build a meal plan using nutrition utilities if nutrition_targets are present
+    # Build a meal plan using nutrition utilities if nutrition_targets are present and nutrition items exist
     meal_plan_output = None
-    try:
-        from ..models.nutrition.utils import generate_daily_meal_plan
-        meal_plan = generate_daily_meal_plan(
-            user_df.iloc[0].to_dict(),
-            nutrition_df,
-            nutr_rec,                  # or None
-            meals=['Breakfast', 'Lunch', 'Dinner'],
-            items_per_meal=2,
-            top_k_candidates=80,
-            nutrition_targets=nutrition_targets,
-            meals_per_day=3,
-            diversity_overlap_threshold=0.5,
-            liked_item_ids=liked_item_ids  # Force liked items into meal plan
-        )
-        # normalize meal_plan rows to same schema as nutrition items
-        meal_plan_output = {}
-        for m, items in meal_plan.items():
-            out_items = []
-            for it in items:
-                out_items.append({
-                    'id': it.get('id'),
-                    'food': it.get('food'),
-                    'calories': it.get('calories'),
-                    'protein': it.get('protein'),
-                    'fat': it.get('fat'),
-                    'carbohydrates': it.get('carbohydrates')
-                })
-            meal_plan_output[m] = out_items
-    except Exception as e:
-        print(f'[Recommendation] Meal plan generation failed: {e}')
-        meal_plan_output = None
+    if rec_type in ('nutrition', 'all') and len(nutrition_df) > 0:
+        try:
+            from ..models.nutrition.utils import generate_daily_meal_plan
+            # Prepare liked_item_ids for meal plan generation
+            liked_item_ids = liked_nutrition_ids if liked_nutrition_ids else set()
+            # Define default meal calorie distribution
+            # Breakfast 25%, Lunch 40%, Dinner 35%
+            meal_cal_dist = {
+                'Breakfast': 0.25,
+                'Lunch': 0.40,
+                'Dinner': 0.35
+            }
+            
+            # Build meal_context_map from nutrition_df for contextual recommendations
+            meal_context_map = {}
+            try:
+                for _, row in nutrition_df.iterrows():
+                    item_id = row.get('id')
+                    item_context = row.get('meal_context', '')
+                    if item_id and item_context:
+                        meal_context_map[int(item_id)] = str(item_context).lower()
+            except Exception:
+                pass
+            
+            meal_plan = generate_daily_meal_plan(
+                user_df.iloc[0].to_dict(),
+                nutrition_df,
+                nutr_rec,                  # or None
+                meals=['Breakfast', 'Lunch', 'Dinner'],
+                items_per_meal=2,
+                top_k_candidates=80,
+                nutrition_targets=nutrition_targets,
+                meals_per_day=3,
+                diversity_overlap_threshold=0.5,
+                liked_item_ids=liked_item_ids,  # Force liked items into meal plan
+                meal_cal_dist=meal_cal_dist,  # Use calorie distribution
+                include_snacks=False,  # Set to True to add snack slot
+                similar_user_likes=similar_user_likes,  # Pass collaborative filtering likes
+                meal_context_map=meal_context_map  # Pass meal context for contextual boosting
+            )
+            # normalize meal_plan rows to same schema as nutrition items
+            meal_plan_output = {}
+            for m, items in meal_plan.items():
+                out_items = []
+                for it in items:
+                    out_items.append({
+                        'id': it.get('id'),
+                        'food': it.get('food'),
+                        'calories': it.get('calories'),
+                        'protein': it.get('protein'),
+                        'fat': it.get('fat'),
+                        'carbohydrates': it.get('carbohydrates'),
+                        'serving_multiplier': it.get('serving_multiplier', 1.0),  # portion scaling
+                        'reason': it.get('reason', 'recommended')  # why recommended
+                    })
+                meal_plan_output[m] = out_items
+        except Exception as e:
+            print(f'[Recommendation] Meal plan generation failed: {e}')
+            meal_plan_output = None
 
     # nutrition_goal is protein goal in grams
     nutrition_goal = protein_goal
@@ -483,15 +661,17 @@ async def get_recommendations(
         daily_calories = None
         percent_of_goal = None
 
-    return RecommendationResponse(
-        nutrition_items=nutr_list,
-        fitness_items=fit_list,
+    result = RecommendationResponse(
+        nutrition_items=nutr_list if rec_type in ('nutrition', 'all') else [],
+        fitness_items=fit_list if rec_type in ('fitness', 'all') else [],
         tdee=float(tdee) if tdee is not None else None,
         nutrition_goal=float(nutrition_goal) if nutrition_goal is not None else None,
         bmr=float(bmr) if bmr is not None else None,
         nutrition_targets=nutrition_targets,
-        meal_plan=meal_plan_output,
-        daily_protein=daily_protein,
-        daily_calories=daily_calories,
-        percent_of_goal=percent_of_goal
+        meal_plan=meal_plan_output if rec_type in ('nutrition', 'all') else None,
+        daily_protein=daily_protein if rec_type in ('nutrition', 'all') else None,
+        daily_calories=daily_calories if rec_type in ('nutrition', 'all') else None,
+        percent_of_goal=percent_of_goal if rec_type in ('nutrition', 'all') else None
     )
+    print(f'[RECOMMENDATION] Returning {len(result.nutrition_items)} nutrition, {len(result.fitness_items)} fitness')
+    return result

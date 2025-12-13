@@ -9,7 +9,10 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
                                      size_threshold_frac: float = 0.4,
                                      meals_per_day: int = 3,
                                      diversity_overlap_threshold: float = 0.4,
-                                     sim_strength: float = 0.5):
+                                     sim_strength: float = 0.5,
+                                     liked_item_ids: set = None,
+                                     similar_user_likes: set = None,
+                                     meal_context: str = None):
     """Generate hybrid nutrition recommendations combining collaborative and content-based filtering."""
     # Try collaborative predictions, but fall back to content-only if the recommender
     # or its preprocessors are not ready (e.g., not fitted or no model loaded).
@@ -20,9 +23,10 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
         collab_scores = np.zeros(len(nutrition_data))
     
     # Content-based scoring based on nutritional metrics
+    # NOTE: protein weight reduced from 0.4 to 0.15 to avoid excessive protein powders
     content_scores = (
-        0.4 * nutrition_data['protein'] / (nutrition_data['calories'] + 1) +
-        0.2 * nutrition_data['fiber'] / (nutrition_data['calories'] + 1) -
+        0.15 * nutrition_data['protein'] / (nutrition_data['calories'] + 1) +
+        0.25 * nutrition_data['fiber'] / (nutrition_data['calories'] + 1) -
         0.2 * nutrition_data['fat'] / (nutrition_data['calories'] + 1) -
         0.2 * nutrition_data['sugars'] / (nutrition_data['calories'] + 1)
     )
@@ -243,22 +247,143 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
     result_df = pd.DataFrame(selected_rows)
     return result_df.reset_index(drop=True)
 
-def generate_daily_meal_plan(user: dict, nutrition_data: pd.DataFrame, recommender, meals=['Breakfast', 'Lunch', 'Dinner'],
-                             items_per_meal: int = 1, top_k_candidates: int = 60, nutrition_targets: dict = None,
-                             meals_per_day: int = 3, diversity_overlap_threshold: float = 0.5, liked_item_ids: set = None):
-    """Create a simple daily meal plan composed of items that together aim to meet daily protein targets.
+def _knapsack_select_meal(candidates: list, capacity_cal: float, max_items: int = 4, protein_goal: float = 20.0, beta: float = 0.5, calories_weight: float = 0.15):
+    """
+    Select best items for a meal using a lightweight knapsack approach.
+    
+    Args:
+        candidates: list of dicts with 'id', 'calories_val', 'protein_val', 'hybrid_score', etc.
+        capacity_cal: max calories for this meal
+        max_items: max number of items to select
+        protein_goal: target protein for this meal (used to scale portions later)
+        beta: weight for hybrid_score in value function (0 = protein only, 1 = score only)
+    
+    Returns:
+        list of selected items, sorted by selection order
+    """
+    if not candidates or capacity_cal <= 0:
+        return []
+    
+    # Discretize capacity to reduce DP table size
+    cal_step = 10  # 10 kcal granularity
+    cap_bins = max(1, int(capacity_cal / cal_step))
+    
+    # Item value: cap per-item protein contribution so many small high-protein items
+    # don't blow out the daily protein target. Value mixes capped protein + calories + hybrid score.
+    max_score = max([c.get('hybrid_score', 0.0) for c in candidates] + [1.0])
+    items_with_value = []
+    # cap per-item protein contribution to a fraction of per-meal target
+    cap_per_item = max(1.0, (protein_goal * 0.9) / float(max_items))
+    for c in candidates:
+        score = c.get('hybrid_score', 0.0) / (max_score + 1e-8)
+        prot = c.get('protein_val', 0.0)
+        prot_contrib = min(prot, cap_per_item)
+        # value blends limited protein contribution, calories, and model score
+        # Protein weight reduced from equal weight to 0.25x to prioritize food diversity over protein maximization
+        value = 0.25 * prot_contrib + calories_weight * c.get('calories_val', 0.0) + beta * score
+        items_with_value.append((value, c))
+    
+    # Sort by value descending for greedy initialization
+    items_with_value.sort(key=lambda x: x[0], reverse=True)
+    
+    # DP: dp[capacity_index][item_count] = best value achievable
+    # To save memory, only track best value and reconstruct items
+    # Actually simpler: use greedy knapsack since K is small (<=60 items, max 4 per meal)
+    selected = []
+    used_cal = 0.0
+    for value, item in items_with_value:
+        if len(selected) >= max_items:
+            break
+        item_cal = item.get('calories_val', 0.0)
+        # prefer items that help reach capacity; allow small overage but avoid underfilling
+        if used_cal + item_cal <= capacity_cal * 1.1:
+            selected.append(item)
+            used_cal += item_cal
+    
+    return selected
 
-    Strategy (greedy with category diversity):
+
+def _scale_portions_for_protein(meal_items: list, target_protein: float, capacity_cal: float = None):
+    """
+    Compute serving multipliers for meal items to meet target protein.
+    
+    Args:
+        meal_items: list of selected items with 'protein_val'
+        target_protein: protein target for the meal
+    
+    Returns:
+        list of (item, multiplier) tuples; multiplier capped at 1.5 (was 2.0) to avoid excessive scaling
+    """
+    if not meal_items:
+        return []
+    
+    total_protein = sum(it.get('protein_val', 0.0) for it in meal_items)
+    if total_protein <= 0:
+        return [(it, 1.0) for it in meal_items]
+    
+    # Compute a uniform multiplier across all items to meet target but do not exceed calorie budget
+    total_cal = sum(it.get('calories_val', 0.0) for it in meal_items)
+    # basic multiplier to meet protein
+    prot_mult = target_protein / total_protein if total_protein > 0 else 1.0
+    # calorie limiter multiplier (do not exceed capacity)
+    if capacity_cal and total_cal > 0:
+        cal_mult = capacity_cal / total_cal
+    else:
+        cal_mult = float('inf')
+
+    # Cap at 1.5x (was 2.0x) to prevent excessive scaling and unrealistic portions
+    multiplier = min(1.5, max(1.0, prot_mult, 1.0))
+    # but ensure multiplier doesn't exceed calorie allowance
+    if cal_mult < multiplier:
+        multiplier = max(1.0, cal_mult)
+
+    # final safety clamp
+    multiplier = min(1.5, max(1.0, multiplier))
+
+    return [(it, multiplier) for it in meal_items]
+
+
+def generate_daily_meal_plan(user: dict, nutrition_data: pd.DataFrame, recommender, meals=['Breakfast', 'Lunch', 'Dinner'],
+                             items_per_meal: int = 2, top_k_candidates: int = 80, nutrition_targets: dict = None,
+                             meals_per_day: int = 3, diversity_overlap_threshold: float = 0.5, liked_item_ids: set = None,
+                             meal_cal_dist: dict = None, include_snacks: bool = False, similar_user_likes: set = None,
+                             meal_context_map: dict = None):
+    """
+    Create a daily meal plan with knapsack-optimized per-meal selection and portion scaling.
+
+    Strategy:
     - Use hybrid scores if present, otherwise compute a shortlist via hybrid_nutrition_recommendations.
-    - For each meal, pick up to `items_per_meal` items from different WWEIA categories to ensure variety
-      (e.g., one dairy, one meat, one vegetable per meal if available).
-    - Prefer higher-protein items but avoid repeating items across meals and within meals.
-    - Apply strict token-based diversity checks to prevent similar food names.
+    - For each meal, apply knapsack selection to maximize protein (+ hybrid score) subject to per-meal calorie cap.
+    - Scale portions (1x to 2x) to meet per-meal protein targets.
+    - Enforce diversity via token overlap checks.
+    - Liked items are prioritized in candidate ranking.
+    
+    Args:
+        meal_cal_dist: dict of meal -> fraction (e.g., {'Breakfast': 0.25, 'Lunch': 0.4, 'Dinner': 0.35})
+        include_snacks: bool, if True add a Snacks meal slot
     """
     if nutrition_data is None or len(nutrition_data) == 0:
         return {m: [] for m in meals}
     
     nd = nutrition_data.copy()
+
+    # **Filter out synthetic/supplement/concentrate items** 
+    # These have extreme protein density and skew recommendations toward unrealistic meals
+    # Include: protein powders, supplements, meal replacements, dried/concentrated items with protein > 40g/100cal
+    synthetic_keywords = ['powder', 'supplement', 'mix', 'shake', 'energy', 'diet product', 'textured', 
+                          'dried', 'bran', 'yeast', 'seaweed']
+    
+    # Remove by keyword
+    if 'food' in nd.columns:
+        food_names_lower = nd['food'].astype(str).str.lower()
+        is_synthetic = food_names_lower.str.contains('|'.join(synthetic_keywords), case=False, na=False)
+        nd = nd[~is_synthetic].copy()
+    
+    # Also filter by protein-to-calorie ratio: items with >0.3g protein per calorie are unrealistic
+    # (normal foods have 0.05-0.15g protein/cal)
+    if 'protein' in nd.columns and 'calories' in nd.columns:
+        protein_ratio = nd['protein'] / (nd['calories'] + 1)
+        nd = nd[protein_ratio <= 0.2].copy()  # Cap at 0.2 g protein per calorie
 
     # ensure we have a scored shortlist
     if 'hybrid_score' not in nd.columns:
@@ -328,147 +453,163 @@ def generate_daily_meal_plan(user: dict, nutrition_data: pd.DataFrame, recommend
     daily_protein = 0.0
     daily_cal = 0.0
 
-    # rank candidates by calories first (to fill daily goal), then protein-to-calorie ratio
-    # This ensures we select calorie-dense items while maintaining protein balance
+    # rank candidates by likes, score, then protein ratio
     # If liked_item_ids provided, prioritize them in ranking
     def rank_candidates(avail):
-        if liked_item_ids:
+        if liked_item_ids or similar_user_likes:
             return sorted(avail,
                           key=lambda x: (
-                              x.get('id') not in liked_item_ids,  # False (liked) sorts before True (not liked)
-                              -x.get('calories_val', 0.0),  # negate for descending
-                              -x.get('protein_val', 0.0) / (x.get('calories_val', 1.0) + 1e-8),
+                              x.get('id') not in liked_item_ids if liked_item_ids else False,  # False (liked) sorts before True (not liked)
+                              x.get('id') not in similar_user_likes if similar_user_likes else False,  # False (collab liked) sorts before True
                               -x.get('hybrid_score', 0.0)
                           ))
         else:
             return sorted(avail,
-                          key=lambda x: (x.get('calories_val', 0.0), x.get('protein_val', 0.0) / (x.get('calories_val', 1.0) + 1e-8), x.get('hybrid_score', 0.0)),
-                          reverse=True)
+                          key=lambda x: (-x.get('hybrid_score', 0.0)))
 
-    # maximum items per meal hard cap to avoid runaway plans
-    # Use items_per_meal to set a reasonable cap (usually 2-4 items per meal)
-    max_items_per_meal = items_per_meal + 2
-
-    remaining_protein = protein_goal
+    # Set default meal calorie distribution if not provided
+    if meal_cal_dist is None:
+        meal_cal_dist = {m: 1.0 / float(len(meals)) for m in meals}
     
-    # Define target_cal early for use in the loop
-    target_cal = tdee if tdee else None
-
-    for i, meal in enumerate(meals):
-        selected = []
-        selected_tokens = []
-
-        # compute per-meal calorie target (distribute calories evenly across meals)
-        # Allow some flexibility (0.8x to 1.2x average per meal)
-        per_meal_cal = (target_cal / float(meals_per_day or 3)) if target_cal and target_cal > 0 else None
-        min_meal_cal = (per_meal_cal * 0.8) if per_meal_cal else 0
-        ideal_meal_cal = (per_meal_cal * 1.0) if per_meal_cal else 0
-        max_meal_cal = (per_meal_cal * 1.5) if per_meal_cal else float('inf')
-        
-        # For protein, just use a fixed per-meal average (not adaptive, to avoid overshooting)
-        fixed_meal_protein = (protein_goal / float(meals_per_day or 3)) if protein_goal > 0 else None
-
-        # available candidates excluding used ids
+    # Compute per-meal calorie and protein targets
+    target_cal = tdee if tdee else 2000.0
+    per_meal_cal_targets = {}
+    per_meal_protein_targets = {}
+    for meal in meals:
+        frac = meal_cal_dist.get(meal, 1.0 / float(len(meals)))
+        per_meal_cal_targets[meal] = target_cal * frac
+        # Cap per-meal protein to realistic levels (20-30g per meal typical)
+        # Reduce excessive protein targets: use much lower default (10g instead of 12g) and stronger cap (25g instead of 32g)
+        target_prot = protein_goal * frac if protein_goal > 0 else 10.0
+        per_meal_protein_targets[meal] = min(target_prot, 25.0)  # Hard cap at 25g per meal
+    
+    used_ids = set()
+    plan = {}
+    daily_protein = 0.0
+    daily_cal = 0.0
+    
+    # **Stage A: Per-meal knapsack selection + portion scaling**
+    for meal in meals:
+        # Get available candidates (not yet used)
         available = [c for c in candidates if c.get('_meal_planner_id') not in used_ids]
+        if not available:
+            plan[meal] = []
+            continue
+        
+        # Rank available candidates (prioritize likes, high score, high protein ratio)
         ranked = rank_candidates(available)
-
-        # Greedily add items until meal calorie target met or cap reached
+        
+        # Apply diversity filter to reduce token overlap
+        diverse_candidates = []
+        diverse_tokens = []
         for c in ranked:
-            if len(selected) >= max_items_per_meal:
-                break
-
-            current_meal_cal = sum(x['calories_val'] for x in selected)
-            current_meal_prot = sum(x['protein_val'] for x in selected)
-            
-            # Don't be too aggressive about stopping early
-            # Continue if we're below 80% of calorie target
-            if current_meal_cal < ideal_meal_cal * 0.8:
-                pass  # Keep adding items
-            elif len(selected) >= items_per_meal:
-                # If we have minimum items and have some reasonable nutrition, we can stop
-                # But be lenient: only stop if we have at least items_per_meal items
-                if current_meal_cal >= ideal_meal_cal * 0.7:
-                    break
-            
-            # Stop if adding this item would exceed protein cap significantly (allow 30% overage)
-            if (fixed_meal_protein is not None and 
-                current_meal_prot + c['protein_val'] > fixed_meal_protein * 1.3):
-                continue
-
-            # diversity check
             too_similar = False
-            for prev in selected_tokens:
-                if not c['tokens'] or not prev:
+            for prev_tok in diverse_tokens:
+                if not c['tokens'] or not prev_tok:
                     continue
-                overlap = len(c['tokens'] & prev) / float(len(c['tokens'] | prev))
+                overlap = len(c['tokens'] & prev_tok) / float(len(c['tokens'] | prev_tok) + 1e-8)
                 if overlap >= diversity_overlap_threshold:
                     too_similar = True
                     break
-            if too_similar:
-                continue
-
-            # size check: skip very large items unless meal is empty
-            if per_meal_cal and c['calories_val'] > max_meal_cal and len(selected) > 0:
-                continue
-
-            # choose item
-            selected.append(c)
-            selected_tokens.append(c['tokens'])
-            used_ids.add(c.get('_meal_planner_id'))
-
-        # Build output items for this meal
+            if not too_similar:
+                diverse_candidates.append(c)
+                diverse_tokens.append(c['tokens'])
+        
+        # Use knapsack to select best items for this meal
+        capacity = per_meal_cal_targets[meal]
+        selected_items = _knapsack_select_meal(
+            diverse_candidates,
+            capacity_cal=capacity,
+            max_items=items_per_meal + 1,
+            protein_goal=per_meal_protein_targets[meal],
+            beta=0.5,  # balance protein and hybrid score
+            calories_weight=0.15
+        )
+        
+        if not selected_items:
+            plan[meal] = []
+            continue
+        
+        # Compute portion multipliers to meet per-meal protein target (respecting calorie capacity)
+        scaled_items = _scale_portions_for_protein(selected_items, per_meal_protein_targets[meal], capacity_cal=capacity)
+        
+        # Build output for this meal
         out_items = []
-        for it in selected[:max_items_per_meal]:
+        for item, multiplier in scaled_items:
+            serving_text = f" x{multiplier:.1f}" if multiplier > 1.05 else ""
+            
+            # Compute reason tags
+            reasons = []
+            if liked_item_ids and item.get('id') in liked_item_ids:
+                reasons.append('liked')
+            if similar_user_likes and item.get('id') in similar_user_likes:
+                reasons.append('similar_to_users_like_you')
+            
+            # Contextual reason (meal type match)
+            if meal_context_map:
+                item_context = meal_context_map.get(item.get('id'), '')
+                if item_context and meal.lower() in str(item_context).lower():
+                    reasons.append(f'fits_{meal.lower()}')
+            
+            # Health goal reason (high protein for muscle gain)
+            health_goals = user.get('health_goals', '')
+            if 'muscle' in str(health_goals).lower() and item.get('protein_val', 0.0) > 20:
+                reasons.append('supports_muscle_gain')
+            elif 'weight_loss' in str(health_goals).lower() and item.get('protein_val', 0.0) > 15:
+                reasons.append('supports_weight_loss')
+            
+            # Default if no specific reasons
+            if not reasons:
+                reasons.append('recommended')
+            
             out_items.append({
-                'id': it.get('id'),
-                'food': it.get('food') or it.get('name'),
-                'calories': it.get('calories_val'),
-                'protein': it.get('protein_val'),
-                'fat': it.get('fat') if 'fat' in it else None,
-                'carbohydrates': it.get('carbohydrates') if 'carbohydrates' in it else None
+                'id': item.get('id'),
+                'food': (item.get('food') or item.get('name') or '') + serving_text,
+                'calories': item.get('calories_val', 0.0) * multiplier,
+                'protein': item.get('protein_val', 0.0) * multiplier,
+                'fat': (item.get('fat', 0.0) or 0.0) * multiplier if 'fat' in item else None,
+                'carbohydrates': (item.get('carbohydrates', 0.0) or 0.0) * multiplier if 'carbohydrates' in item else None,
+                'serving_multiplier': multiplier,
+                'reason': ', '.join(reasons)
             })
-
-        # update daily totals
-        daily_protein += sum(x['protein_val'] for x in selected[:max_items_per_meal])
-        daily_cal += sum(x['calories_val'] for x in selected[:max_items_per_meal])
-
+            daily_protein += item.get('protein_val', 0.0) * multiplier
+            daily_cal += item.get('calories_val', 0.0) * multiplier
+            used_ids.add(item.get('_meal_planner_id'))
+        
         plan[meal] = out_items
-
-    # After meals, try to fill calorie gap (prioritize calories, then protein balance)
-    calorie_gap = (target_cal - daily_cal) if target_cal and target_cal > 0 else 0
     
-    # Only top-up if we're below 90% of calorie goal
-    if target_cal and calorie_gap > target_cal * 0.1:
-        leftovers = [c for c in candidates if c.get('_meal_planner_id') not in used_ids]
-        
-        # Sort by calories (to fill calorie gap first), then avoid protein items if possible
-        items_added = 0
-        last_meal = meals[-1]
-        
-        for c in sorted(leftovers, key=lambda x: (-x.get('calories_val', 0.0), x.get('protein_val', 0.0))):
-            # Hard stop if calorie goal is met
-            if daily_cal >= target_cal * 0.95:
-                break
-            
-            # Don't add items if calorie goal is met
-            if daily_cal >= target_cal:
-                break
-            
-            # Limit items added in top-up phase (allow up to 10 to fill calories)
-            if items_added >= 10:
-                break
-            
-            # append to last meal
-            plan[last_meal].append({
-                'id': c.get('id'),
-                'food': c.get('food') or c.get('name'),
-                'calories': c.get('calories_val'),
-                'protein': c.get('protein_val'),
-                'fat': c.get('fat') if 'fat' in c else None,
-                'carbohydrates': c.get('carbohydrates') if 'carbohydrates' in c else None
-            })
-            daily_protein += c.get('protein_val', 0.0)
-            daily_cal += c.get('calories_val', 0.0)
-            items_added += 1
-
+    # If snacks enabled, allocate remaining calories to a snack slot
+    if include_snacks:
+        snack_cal_budget = target_cal * 0.1 - daily_cal  # 10% snack budget
+        if snack_cal_budget > 50:  # Only if significant budget remains
+            available = [c for c in candidates if c.get('_meal_planner_id') not in used_ids]
+            if available:
+                ranked = rank_candidates(available)
+                snack_items = _knapsack_select_meal(
+                    ranked[:20],  # Top 20 only for snacks
+                    capacity_cal=snack_cal_budget,
+                    max_items=2,
+                    protein_goal=5.0,
+                    beta=0.3,
+                    calories_weight=0.15
+                )
+                snack_out = []
+                for item in snack_items:
+                    # Compute reason tags for snacks
+                    snack_reasons = ['snack']
+                    if similar_user_likes and item.get('id') in similar_user_likes:
+                        snack_reasons.append('similar_to_users_like_you')
+                    
+                    snack_out.append({
+                        'id': item.get('id'),
+                        'food': item.get('food') or item.get('name'),
+                        'calories': item.get('calories_val', 0.0),
+                        'protein': item.get('protein_val', 0.0),
+                        'serving_multiplier': 1.0,
+                        'reason': ', '.join(snack_reasons)
+                    })
+                    daily_protein += item.get('protein_val', 0.0)
+                    daily_cal += item.get('calories_val', 0.0)
+                plan['Snacks'] = snack_out
+    
     return plan

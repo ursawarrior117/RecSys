@@ -70,8 +70,22 @@ class FitnessRecommender(BaseRecommender):
             [user_features_repeated, activity_features_tiled],
             interactions_flattened,
             epochs=10,
-            batch_size=32
+            batch_size=32,
+            verbose=0
         )
+        # Store training-time interaction info for collaborative signals
+        try:
+            self.interactions_matrix = interactions.copy()
+            # Simple popularity signal (number of positive interactions per activity)
+            pop = interactions.sum(axis=0)
+            # Avoid division by zero
+            if pop.max() > 0:
+                self.activity_popularity = pop / float(pop.max())
+            else:
+                self.activity_popularity = np.zeros_like(pop, dtype=float)
+        except Exception:
+            self.interactions_matrix = None
+            self.activity_popularity = None
         
     def predict_scores(self, user: dict, activity_data: pd.DataFrame) -> np.ndarray:
         """Predict scores for a user and fitness items."""
@@ -90,11 +104,109 @@ class FitnessRecommender(BaseRecommender):
             activity_data[['level', 'bodypart', 'equipment', 'type']]
         )
         user_features_repeated = np.repeat(user_features, len(activity_features), axis=0)
-        scores = self.model.predict([user_features_repeated, activity_features], batch_size=128)
+        scores = self.model.predict([user_features_repeated, activity_features], batch_size=128, verbose=0)
         return scores.flatten()
         
     def generate_recommendations(self, user: dict, top_k: int = 5) -> pd.DataFrame:
-        """Generate fitness recommendations for a user."""
-        scores = self.predict_scores(user, self.database)
-        top_indices = scores.argsort()[-top_k:][::-1]
-        return self.database.iloc[top_indices]
+        """Generate fitness recommendations for a user with hybrid scoring."""
+        user_df = pd.DataFrame([user]).copy()
+        if 'tdee' not in user_df.columns:
+            user_df['tdee'] = user_df.apply(lambda r: calculate_tdee(r.get('weight', 0), r.get('height', 0), r.get('age', 30), r.get('gender', 'M'), r.get('activity_level', 'medium')), axis=1)
+        for col in ['age', 'weight', 'height', 'tdee']:
+            if col not in user_df.columns:
+                user_df[col] = 0
+
+        user_features = self.user_preprocessor.transform(user_df[['age', 'weight', 'height', 'tdee']])
+        ad = self.database.copy()
+        activity_features = self.activity_preprocessor.transform(
+            ad[['level', 'bodypart', 'equipment', 'type']]
+        )
+        user_features_repeated = np.repeat(user_features, len(activity_features), axis=0)
+        scores = self.model.predict([user_features_repeated, activity_features], batch_size=128, verbose=0).flatten()
+        
+        # Item-based similarity scoring
+        sim_scores = np.zeros(len(scores))
+        sim_neg = np.zeros(len(scores))
+        
+        try:
+            # Check for explicit positive/negative activity ids from calling code
+            pos_items = None
+            neg_items = None
+            if getattr(self, 'user_positive_item_ids', None):
+                try:
+                    id_list = list(self.database['id'].tolist()) if 'id' in self.database.columns else list(range(len(self.database)))
+                    pos_items = [id_list.index(pid) for pid in self.user_positive_item_ids if pid in id_list]
+                except Exception:
+                    pos_items = None
+            if getattr(self, 'user_negative_item_ids', None):
+                try:
+                    id_list = list(self.database['id'].tolist()) if 'id' in self.database.columns else list(range(len(self.database)))
+                    neg_items = [id_list.index(pid) for pid in self.user_negative_item_ids if pid in id_list]
+                except Exception:
+                    neg_items = None
+
+            # Fallback: use training interactions matrix if available
+            if pos_items is None and hasattr(self, 'interactions_matrix') and self.interactions_matrix is not None:
+                if self.interactions_matrix.shape[0] > 0:
+                    pos_items = np.where(self.interactions_matrix[0] > 0)[0]
+
+            # Compute positive similarity
+            if pos_items is not None and len(pos_items) > 0:
+                item_vecs = activity_features
+                norms = np.linalg.norm(item_vecs, axis=1, keepdims=True) + 1e-8
+                item_vecs_norm = item_vecs / norms
+                for i in range(len(item_vecs_norm)):
+                    sims = item_vecs_norm[pos_items] @ item_vecs_norm[i]
+                    sim_scores[i] = np.max(sims) if len(sims) > 0 else 0.0
+
+            # Compute negative similarity (activities similar to disliked ones)
+            if neg_items is not None and len(neg_items) > 0:
+                item_vecs = activity_features
+                norms = np.linalg.norm(item_vecs, axis=1, keepdims=True) + 1e-8
+                item_vecs_norm = item_vecs / norms
+                for i in range(len(item_vecs_norm)):
+                    sims = item_vecs_norm[neg_items] @ item_vecs_norm[i]
+                    sim_neg[i] = np.max(sims) if len(sims) > 0 else 0.0
+
+            # Normalize similarity scores
+            if sim_scores.size > 0:
+                smin, smax = sim_scores.min(), sim_scores.max()
+                if smax > smin:
+                    sim_scores = (sim_scores - smin) / (smax - smin)
+                else:
+                    sim_scores = np.zeros_like(sim_scores)
+            if sim_neg.size > 0:
+                nmin, nmax = sim_neg.min(), sim_neg.max()
+                if nmax > nmin:
+                    sim_neg = (sim_neg - nmin) / (nmax - nmin)
+                else:
+                    sim_neg = np.zeros_like(sim_neg)
+        except Exception:
+            sim_scores = np.zeros(len(scores))
+            sim_neg = np.zeros(len(scores))
+
+        # Blend model score and similarity
+        alpha = 0.7  # model score weight
+        smin, smax = scores.min(), scores.max()
+        if smax > smin:
+            norm_scores = (scores - smin) / (smax - smin)
+        else:
+            norm_scores = np.zeros_like(scores)
+
+        # negative_penalty controls how strongly dislikes reduce similarity influence
+        negative_penalty = 0.8
+        sim_effect = sim_scores - negative_penalty * sim_neg
+        hybrid = alpha * norm_scores + (1.0 - alpha) * sim_effect
+
+        # Attach hybrid score for downstream reranking and API serialization
+        df = self.database.copy()
+        try:
+            df['hybrid_score'] = hybrid
+        except Exception:
+            # Ensure lengths match; fallback to assigning via numpy
+            df = df.reset_index(drop=True)
+            df['hybrid_score'] = list(hybrid)
+
+        top_indices = np.argsort(hybrid)[-top_k:][::-1]
+
+        return df.iloc[top_indices]

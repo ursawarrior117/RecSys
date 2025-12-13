@@ -5,7 +5,6 @@ import { logInteraction as apiLogInteraction } from "./services/api";
 import { deleteUser as apiDeleteUser } from "./services/api";
 
 function App() {
-  const [items, setItems] = useState([]);
   const [userId, setUserId] = useState(1);
   const [recommendations, setRecommendations] = useState(null);
   const [userForm, setUserForm] = useState({
@@ -19,11 +18,10 @@ function App() {
   });
   const [userCreated, setUserCreated] = useState(false);
   const [tdee, setTdee] = useState(null);
-  const [nutritionGoal, setNutritionGoal] = useState(null);
+  const [selectedBodypart, setSelectedBodypart] = useState(null);
   const [bmr, setBmr] = useState(null);
   const [nutritionTargets, setNutritionTargets] = useState(null);
   const [mealPlan, setMealPlan] = useState(null);
-  const [selectedItemIds, setSelectedItemIds] = useState(new Set());
   const [likedItemIds, setLikedItemIds] = useState(new Set());
   const [dislikedItemIds, setDislikedItemIds] = useState(new Set());
   const [loadUserId, setLoadUserId] = useState('');
@@ -43,46 +41,17 @@ function App() {
     }
   }, [userCreated]);
 
-  const handleUserFormChange = (e) => {
-    const { name, value } = e.target;
-    setUserForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleUserFormSubmit = async (e) => {
-    // keep default form submit behavior but do NOT auto-fetch recommendations;
-    // creating a user should be an explicit action that does not immediately
-    // generate recommendations unless the operator chooses to do so.
-    e.preventDefault();
-    const payload = {
-      ...userForm,
-      age: Number(userForm.age),
-      weight: Number(userForm.weight),
-      height: Number(userForm.height),
-      sleep_good: Number(userForm.sleep_good)
-    };
-    const res = await createUser(payload);
-    if (res && res.id) {
-      setUserId(res.id);
-      setUserCreated(true);
-    }
-  };
-
   const getRecommendationsForUser = async (uid) => {
     try {
       const res = await fetch(`/api/recommendations/${uid}?top_k=5`);
       const data = await res.json();
       setRecommendations(data);
-      // set TDEE/BMR and nutrition targets if present
+      // extract meal plan and nutrition stats if present
       if (data) {
         setTdee(data.tdee ?? null);
-        setNutritionGoal(data.nutrition_goal ?? null);
         setBmr(data.bmr ?? null);
-        // if nutrition_targets present, map to state
         if (data.nutrition_targets) {
           setNutritionTargets(data.nutrition_targets);
-        } else if (data.calories || data.protein_g) {
-          // older fields fallback
-          setNutritionTargets({ calories: data.tdee, protein_g: data.nutrition_goal });
         }
         if (data.meal_plan) {
           setMealPlan(data.meal_plan);
@@ -97,16 +66,6 @@ function App() {
 
   // NOTE: impression events are sent by the `Recommendations` component
   // to avoid double-posting we do not send impressions here.
-
-  const fetchItems = async () => {
-    try {
-      const res = await fetch("/api/items");
-      const data = await res.json();
-      setItems(data);
-    } catch (err) {
-      console.error("Error fetching items:", err);
-    }
-  };
 
   const loadExistingUser = async () => {
     const id = Number(loadUserId);
@@ -148,20 +107,6 @@ function App() {
   useEffect(() => {
     fetchUsers(0);
   }, []);
-
-  const addItem = async () => {
-    try {
-      const res = await fetch("/api/items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: `Item ${items.length + 1}` }),
-      });
-      const data = await res.json();
-      setItems([...items, data]);
-    } catch (err) {
-      console.error("Error adding item:", err);
-    }
-  };
 
   const createUser = async (payload) => {
     try {
@@ -223,7 +168,6 @@ function App() {
                 if (data) {
                   setRecommendations(data);
                   setTdee(data.tdee ?? null);
-                  setNutritionGoal(data.nutrition_goal ?? null);
                   setBmr(data.bmr ?? null);
                   if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
                   if (data.meal_plan) setMealPlan(data.meal_plan);
@@ -311,15 +255,118 @@ function App() {
               Create a user first using the form above.
             </div>
           ) : (
-            <button type="button" onClick={async () => {
-              try {
-                await getRecommendationsForUser(userId);
-              } catch (e) {
-                console.debug('Failed to fetch recommendations', e);
-              }
-            }} style={buttonPrimaryStyle}>Get Recommendations</button>
+            <div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1rem' }}>
+                <button type="button" onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/recommendations/${userId}?top_k=5&rec_type=all`);
+                    const data = await res.json();
+                    setRecommendations(data);
+                    if (data) {
+                      setTdee(data.tdee ?? null);
+                      setBmr(data.bmr ?? null);
+                      if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
+                      if (data.meal_plan) setMealPlan(data.meal_plan);
+                    }
+                  } catch (e) {
+                    console.debug('Failed to fetch recommendations', e);
+                  }
+                }} style={buttonPrimaryStyle}>All Recommendations</button>
+                
+                <button type="button" onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/recommendations/${userId}?top_k=5&rec_type=nutrition`);
+                    const data = await res.json();
+                    setRecommendations(data);
+                    setSelectedBodypart(null);
+                    if (data) {
+                      setTdee(data.tdee ?? null);
+                      setBmr(data.bmr ?? null);
+                      if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
+                      if (data.meal_plan) setMealPlan(data.meal_plan);
+                    }
+                  } catch (e) {
+                    console.debug('Failed to fetch recommendations', e);
+                  }
+                }} style={{...buttonPrimaryStyle, background: '#f59e0b'}}>Nutrition Only</button>
+                
+                <button type="button" onClick={async () => {
+                  try {
+                    const url = selectedBodypart 
+                      ? `/api/recommendations/${userId}?top_k=5&rec_type=fitness&bodypart=${encodeURIComponent(selectedBodypart)}`
+                      : `/api/recommendations/${userId}?top_k=5&rec_type=fitness`;
+                    const res = await fetch(url);
+                    const data = await res.json();
+                    setRecommendations(data);
+                    setMealPlan(null);
+                    setNutritionTargets(null);
+                    if (data) {
+                      setTdee(data.tdee ?? null);
+                      setBmr(data.bmr ?? null);
+                    }
+                  } catch (e) {
+                    console.debug('Failed to fetch recommendations', e);
+                  }
+                }} style={{...buttonPrimaryStyle, background: '#10b981'}}>Fitness Only</button>
+              </div>
+
+              {/* Body Part Filter for Fitness */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginRight: 8 }}>Filter Fitness by Body Part:</label>
+                <select 
+                  value={selectedBodypart || ''} 
+                  onChange={(e) => setSelectedBodypart(e.target.value || null)}
+                  style={{
+                    padding: '0.5rem 0.75rem',
+                    borderRadius: 4,
+                    border: '1px solid #d1d5db',
+                    fontSize: 13,
+                    background: '#fff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="">All Body Parts</option>
+                  <option value="chest">Chest</option>
+                  <option value="back">Back</option>
+                  <option value="legs">Legs</option>
+                  <option value="shoulders">Shoulders</option>
+                  <option value="arms">Arms</option>
+                  <option value="core">Core</option>
+                  <option value="glutes">Glutes</option>
+                  <option value="cardio">Cardio</option>
+                </select>
+              </div>
+            </div>
           )}
         </div>
+
+        {/* User Stats Section */}
+        {userCreated && tdee && (
+          <div style={cardStyle}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: '1rem', color: '#1f2937' }}>Your Stats</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem' }}>
+              {bmr && (
+                <div style={{ padding: '1rem', background: '#f0fdf4', borderRadius: 6, borderLeft: '4px solid #22c55e' }}>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Basal Metabolic Rate</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#16a34a' }}>{Math.round(bmr)}</div>
+                  <div style={{ fontSize: 11, color: '#999' }}>kcal/day</div>
+                </div>
+              )}
+              <div style={{ padding: '1rem', background: '#fef3c7', borderRadius: 6, borderLeft: '4px solid #f59e0b' }}>
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Daily Calorie Goal</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#d97706' }}>{Math.round(tdee)}</div>
+                <div style={{ fontSize: 11, color: '#999' }}>kcal/day</div>
+              </div>
+              {nutritionTargets && nutritionTargets.protein_g && (
+                <div style={{ padding: '1rem', background: '#dbeafe', borderRadius: 6, borderLeft: '4px solid #3b82f6' }}>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>Daily Protein Goal</div>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#1d4ed8' }}>{Math.round(nutritionTargets.protein_g)}</div>
+                  <div style={{ fontSize: 11, color: '#999' }}>grams/day</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Recommendations Display */}
         {recommendations ? (
@@ -372,7 +419,11 @@ function App() {
                               <li key={it.id || `${mealName}-${i}`} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px dashed #f0f0f0' }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                                   <div>
-                                    <div style={{ fontWeight: 600 }}>{it.food || it.name}</div>
+                                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      {it.food || it.name}
+                                      {it.reason === 'liked' && <span style={{ fontSize: 11, background: '#d1fae5', color: '#065f46', padding: '2px 6px', borderRadius: 3 }}>Liked</span>}
+                                      {it.reason === 'snack' && <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: 3 }}>Snack</span>}
+                                    </div>
                                     <div style={{ fontSize: 12, color: '#666' }}>
                                       {it.category ? `${it.category}` : ''}
                                       {it.tags ? ` • ${it.tags}` : ''}
@@ -381,13 +432,16 @@ function App() {
                                       <div style={{ textAlign: 'right', fontSize: 12, color: '#333' }}>
                                         <div>{Math.round(Number(it.calories || 0))} kcal</div>
                                         <div style={{ fontSize: 11, color: '#666' }}>{Math.round(Number(it.protein || 0))} g protein</div>
+                                        {it.serving_multiplier && it.serving_multiplier > 1.05 && 
+                                          <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>x{it.serving_multiplier.toFixed(1)}</div>
+                                        }
                                       </div>
                                 </div>
                                 <div style={{ marginTop: 6, fontSize: 12, color: '#444' }}>
                                   <span style={{ marginRight: 10 }}>Carbs: {Math.round(Number(it.carbohydrates || it.carbs_g || 0))} g</span>
                                   <span>Fat: {Math.round(Number(it.fat || 0))} g</span>
                                 </div>
-                                    <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                                <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
                                       <button
                                         onClick={async () => {
                                           const nid = it.id || it.item_id || null;
@@ -478,6 +532,158 @@ function App() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* Fitness Recommendations Section */}
+              {recommendations.fitness_items && recommendations.fitness_items.length > 0 && (
+                <div style={{ marginTop: '2rem' }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: '1rem', color: '#374151' }}>Fitness Recommendations</h3>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                    {recommendations.fitness_items.map((activity, idx) => (
+                      <div
+                        key={activity.id || idx}
+                        style={{
+                          border: '1px solid #e6e6e6',
+                          borderRadius: 8,
+                          padding: 16,
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
+                          background: '#fff',
+                          transition: 'transform 0.2s, box-shadow 0.2s',
+                          cursor: 'pointer'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = 'translateY(-2px)';
+                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = 'translateY(0)';
+                          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)';
+                        }}
+                      >
+                        <div style={{ marginBottom: 12 }}>
+                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>{activity.name}</div>
+                          <div style={{ fontSize: 13, color: '#666', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.type}</span>
+                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.level}</span>
+                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.bodypart}</span>
+                          </div>
+                        </div>
+                        
+                        {activity.equipment && (
+                          <div style={{ marginBottom: 10, fontSize: 13 }}>
+                            <span style={{ color: '#666' }}>Equipment: </span>
+                            <span style={{ fontWeight: 600 }}>{activity.equipment}</span>
+                          </div>
+                        )}
+
+                        {activity.hybrid_score !== undefined && activity.hybrid_score !== null && (
+                          <div style={{ marginBottom: 12, padding: 8, background: '#f0fdf4', borderRadius: 6, fontSize: 12 }}>
+                            <div style={{ color: '#666' }}>Match Score</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: '#22c55e' }}>
+                              {Math.round(activity.hybrid_score * 100)}%
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <button
+                            onClick={async () => {
+                              const fid = activity.id || null;
+                              if (!fid) return;
+                              if (!userCreated) {
+                                alert('Create or load a user before interacting');
+                                return;
+                              }
+                              setLikedItemIds(prev => {
+                                const next = new Set(prev);
+                                next.add(fid);
+                                return next;
+                              });
+                              setDislikedItemIds(prev => {
+                                const next = new Set(prev);
+                                next.delete(fid);
+                                return next;
+                              });
+                              try {
+                                await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'like' });
+                                await getRecommendationsForUser(userId);
+                              } catch (e) {
+                                console.error('Failed to log like interaction', e);
+                                setLikedItemIds(prev => {
+                                  const next = new Set(prev);
+                                  next.delete(fid);
+                                  return next;
+                                });
+                                alert('Failed to record like');
+                              }
+                            }}
+                            disabled={likedItemIds.has(activity.id)}
+                            style={{
+                              flex: 1,
+                              padding: '0.5rem',
+                              borderRadius: 4,
+                              background: likedItemIds.has(activity.id) ? '#d1fae5' : '#fff',
+                              border: likedItemIds.has(activity.id) ? '1px solid #86efac' : '1px solid #d1d5db',
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: likedItemIds.has(activity.id) ? '#065f46' : '#333'
+                            }}
+                          >
+                            {likedItemIds.has(activity.id) ? '✓ Liked' : 'Like'}
+                          </button>
+
+                          <button
+                            onClick={async () => {
+                              const fid = activity.id || null;
+                              if (!fid) return;
+                              if (!userCreated) {
+                                alert('Create or load a user before interacting');
+                                return;
+                              }
+                              setDislikedItemIds(prev => {
+                                const next = new Set(prev);
+                                next.add(fid);
+                                return next;
+                              });
+                              setLikedItemIds(prev => {
+                                const next = new Set(prev);
+                                next.delete(fid);
+                                return next;
+                              });
+                              try {
+                                await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'dislike' });
+                                await getRecommendationsForUser(userId);
+                              } catch (e) {
+                                console.error('Failed to log dislike interaction', e);
+                                setDislikedItemIds(prev => {
+                                  const next = new Set(prev);
+                                  next.delete(fid);
+                                  return next;
+                                });
+                                alert('Failed to record dislike');
+                              }
+                            }}
+                            disabled={dislikedItemIds.has(activity.id)}
+                            style={{
+                              flex: 1,
+                              padding: '0.5rem',
+                              borderRadius: 4,
+                              background: dislikedItemIds.has(activity.id) ? '#fee2e2' : '#fff',
+                              border: dislikedItemIds.has(activity.id) ? '1px solid #fca5a5' : '1px solid #d1d5db',
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: dislikedItemIds.has(activity.id) ? '#7f1d1d' : '#333'
+                            }}
+                          >
+                            {dislikedItemIds.has(activity.id) ? '✗ Disliked' : 'Dislike'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}

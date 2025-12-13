@@ -9,7 +9,7 @@ export default function UserForm({ onResults }) {
   
   const [createForm, setCreateForm] = useState({
     id: "", name: "", external_id: "", age: 30, weight: 75, height: 175, gender: "M",
-    activity_level: "medium", health_goals: "MG", sleep_good: "Yes"
+    activity_level: "medium", health_goals: "MG", sleep_good: "Yes", dietary_restrictions: ""
   });
   
   const [recForm, setRecForm] = useState({
@@ -41,7 +41,8 @@ export default function UserForm({ onResults }) {
         gender: createForm.gender,
         activity_level: createForm.activity_level,
         health_goals: createForm.health_goals,
-        sleep_good: createForm.sleep_good === "Yes" ? 1 : 0
+        sleep_good: createForm.sleep_good === "Yes" ? 1 : 0,
+        dietary_restrictions: createForm.dietary_restrictions || undefined
       };
       const newUser = await createUser(userData);
       setError("");
@@ -60,7 +61,7 @@ export default function UserForm({ onResults }) {
       // reset form
       setCreateForm({
         id: "", name: "", external_id: "", age: 30, weight: 75, height: 175, gender: "M",
-        activity_level: "medium", health_goals: "MG", sleep_good: "Yes"
+        activity_level: "medium", health_goals: "MG", sleep_good: "Yes", dietary_restrictions: ""
       });
     } catch (e) {
       setError(`Failed to create user: ${e.message}`);
@@ -176,6 +177,16 @@ export default function UserForm({ onResults }) {
             <option value="MG">Muscle Gain</option>
             <option value="WL">Weight Loss</option>
           </select>
+        </div>
+        <div>
+          <label>Dietary Restrictions (comma-separated): </label>
+          <input 
+            type="text" 
+            name="dietary_restrictions" 
+            value={createForm.dietary_restrictions} 
+            onChange={handleCreateChange} 
+            placeholder="e.g., vegetarian, gluten-free, dairy-free, nut-free, vegan"
+          />
         </div>
         <div>
           <label>Sleep Good: </label>
