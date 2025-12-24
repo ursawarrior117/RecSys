@@ -11,7 +11,7 @@ from ..database.session import get_db
 from ..database.models import NutritionItem, FitnessItem, User
 from sqlalchemy.exc import IntegrityError
 from ..schemas.schemas import NutritionItemResponse, FitnessItemResponse
-from ..models.nutrition.utils import hybrid_nutrition_recommendations
+from ..recommenders.nutrition.utils import hybrid_nutrition_recommendations
 
 router = APIRouter()
 

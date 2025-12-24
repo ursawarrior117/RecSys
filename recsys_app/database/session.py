@@ -53,13 +53,14 @@ def init_sample_data():
 
         # Always clear and reload nutrition items from CSV
         import pandas as pd
-        csv_path = "data/2021-2023 FNDDS At A Glance - FNDDS Nutrient Values.csv"
+        import os
+        csv_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', '2021-2023 FNDDS At A Glance - FNDDS Nutrient Values.csv')
         try:
             db.query(NutritionItem).delete()
             db.commit()
             df = pd.read_csv(csv_path, skiprows=1)
-            print(f"[CSV Load] Nutrition CSV columns: {list(df.columns)}")
-            print(f"[CSV Load] Nutrition CSV columns: {list(df.columns)}")
+            # print(f"[CSV Load] Nutrition CSV columns: {list(df.columns)}")
+            # print(f"[CSV Load] Nutrition CSV columns: {list(df.columns)}")
             # Map columns and select only needed columns
             rename_map = {
                 "Main food description": "food",

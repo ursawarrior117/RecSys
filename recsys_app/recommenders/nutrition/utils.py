@@ -23,7 +23,6 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
         collab_scores = np.zeros(len(nutrition_data))
     
     # Content-based scoring based on nutritional metrics
-    # NOTE: protein weight reduced from 0.4 to 0.15 to avoid excessive protein powders
     content_scores = (
         0.15 * nutrition_data['protein'] / (nutrition_data['calories'] + 1) +
         0.25 * nutrition_data['fiber'] / (nutrition_data['calories'] + 1) -
@@ -39,8 +38,7 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
     collab_scores = (collab_scores - collab_scores.min()) / (collab_scores.max() - collab_scores.min() + 1e-8)
     content_scores = (content_scores - content_scores.min()) / (content_scores.max() - content_scores.min() + 1e-8)
 
-    # If the recommender provides positive/negative item ids and item preprocessors,
-    # compute an item-based similarity signal and blend it into the content score.
+    # If the recommender provides positive/negative item ids and item preprocessors, compute an item-based similarity signal and blend it into the content score.
     try:
         if recommender is not None and hasattr(recommender, 'item_preprocessor') and (
             getattr(recommender, 'user_positive_item_ids', None) or getattr(recommender, 'user_negative_item_ids', None)
@@ -120,8 +118,7 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
             meals = float(meals_per_day or 3)
             per_meal_protein = max(1.0, protein_goal / meals)
 
-            # protein_ratio: fraction of per-meal protein provided by the item
-            # clip to [0, 2] so extremely high values don't dominate
+            # clip protein ratio to [0, 2] so extremely high values don't dominate
             prot_ratio = (nutrition_data['protein'] / (per_meal_protein + 1e-8)).fillna(0.0).clip(0.0, 2.0)
 
             # protein score scales with prot_ratio (0..2) and is centered so items meeting target get boost ~1
@@ -151,7 +148,7 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
     nutrition_data = nutrition_data.sort_values('hybrid_score', ascending=False)
     
     # Post-process to enforce realistic variety: greedy select top_k items
-    # avoiding near-duplicate food names and oversized items relative to per-meal calories.
+    # avoiding duplicate food names and oversized items
     def _tokenize_name(name: str):
         if not name:
             return set()
@@ -213,7 +210,6 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
         # common-token cap: avoid picking many items that share the same common token
         skip_common = False
         for ct in (toks & common_tokens):
-            # count how many selected items contain this token
             cur_count = sum(1 for st in selected_tokens if ct in st)
             if cur_count >= max_common_occurrence:
                 skip_common = True
@@ -221,11 +217,10 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
         if skip_common:
             continue
 
-        # size constraint: avoid items that are larger than a reasonable per-meal portion
+        # item size constraint
         try:
             cals = float(row.get('calories') or 0.0)
             if per_meal_cal is not None and cals > (per_meal_cal * 0.9):
-                # If the item is larger than ~90% of per-meal calories, skip it for variety
                 continue
         except Exception:
             pass
@@ -248,19 +243,6 @@ def hybrid_nutrition_recommendations(user: dict, nutrition_data: pd.DataFrame, r
     return result_df.reset_index(drop=True)
 
 def _knapsack_select_meal(candidates: list, capacity_cal: float, max_items: int = 4, protein_goal: float = 20.0, beta: float = 0.5, calories_weight: float = 0.15):
-    """
-    Select best items for a meal using a lightweight knapsack approach.
-    
-    Args:
-        candidates: list of dicts with 'id', 'calories_val', 'protein_val', 'hybrid_score', etc.
-        capacity_cal: max calories for this meal
-        max_items: max number of items to select
-        protein_goal: target protein for this meal (used to scale portions later)
-        beta: weight for hybrid_score in value function (0 = protein only, 1 = score only)
-    
-    Returns:
-        list of selected items, sorted by selection order
-    """
     if not candidates or capacity_cal <= 0:
         return []
     
@@ -268,8 +250,7 @@ def _knapsack_select_meal(candidates: list, capacity_cal: float, max_items: int 
     cal_step = 10  # 10 kcal granularity
     cap_bins = max(1, int(capacity_cal / cal_step))
     
-    # Item value: cap per-item protein contribution so many small high-protein items
-    # don't blow out the daily protein target. Value mixes capped protein + calories + hybrid score.
+    # Item value: cap per-item protein contribution so many small high-protein items. Value mixes capped protein + calories + hybrid score.
     max_score = max([c.get('hybrid_score', 0.0) for c in candidates] + [1.0])
     items_with_value = []
     # cap per-item protein contribution to a fraction of per-meal target
@@ -278,8 +259,7 @@ def _knapsack_select_meal(candidates: list, capacity_cal: float, max_items: int 
         score = c.get('hybrid_score', 0.0) / (max_score + 1e-8)
         prot = c.get('protein_val', 0.0)
         prot_contrib = min(prot, cap_per_item)
-        # value blends limited protein contribution, calories, and model score
-        # Protein weight reduced from equal weight to 0.25x to prioritize food diversity over protein maximization
+        # value blends limited protein contribution, calories, and model score, reduced from equal weight to 0.25x to prioritize food diversity.
         value = 0.25 * prot_contrib + calories_weight * c.get('calories_val', 0.0) + beta * score
         items_with_value.append((value, c))
     

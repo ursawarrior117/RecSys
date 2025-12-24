@@ -8,7 +8,7 @@ from math import exp
 from ..database.session import get_db
 from ..database.models import User, NutritionItem, FitnessItem, Interaction
 from ..schemas.schemas import RecommendationResponse
-from ..models.nutrition.utils import hybrid_nutrition_recommendations
+from ..recommenders.nutrition.utils import hybrid_nutrition_recommendations
 from recsys_app.core.utils import calculate_tdee
 import os
 
@@ -28,12 +28,6 @@ async def get_recommendations(
     bodypart: str = None
 ):
     """Get personalized recommendations for a user.
-    
-    Args:
-        user_id: User ID
-        top_k: Number of recommendations
-        rec_type: 'nutrition', 'fitness', or 'all' (default)
-        bodypart: Filter fitness by body part (e.g., 'chest', 'legs', 'back')
     """
     # Validate rec_type
     if rec_type not in ('nutrition', 'fitness', 'all'):
@@ -74,9 +68,6 @@ async def get_recommendations(
                     item_tags = set(t.strip().lower() for t in it.dietary_tags.split(',') if t.strip())
             except Exception:
                 pass
-            # Keep item if no restriction conflict (conservative: keep by default)
-            # Only exclude if item is explicitly marked incompatible
-            # Example: if user is "vegetarian" and item is "not-vegetarian", exclude
             should_exclude = False
             if "vegetarian" in user_restrictions and "meat" in item_tags:
                 should_exclude = True
@@ -258,8 +249,7 @@ async def get_recommendations(
     else:
         alpha = 0.8
 
-    # Generate recommendations. Import heavy ML recommenders lazily so the
-    # application can start without TensorFlow if it's not available.
+    # Generate recommendations lazily
     nutrition_recs = None
     fitness_recs = None
     nutr_rec = None  # Initialize to None; may be set below if ML is enabled
@@ -274,7 +264,7 @@ async def get_recommendations(
             nutr_rec = loaded.get('nutrition') if isinstance(loaded, dict) else None
             # If loading failed or models are not present, fall back to fresh instances
             if nutr_rec is None:
-                from ..models.nutrition.recommender import NutritionRecommender
+                from ..recommenders.nutrition.recommender import NutritionRecommender
                 nutr_rec = NutritionRecommender()
             # Fetch user's positive and negative nutrition interactions to inform item-based similarity
             try:
@@ -355,7 +345,7 @@ async def get_recommendations(
             fit_rec = loaded.get('fitness') if isinstance(loaded, dict) else None
             # If loading failed or models are not present, fall back to fresh instances
             if fit_rec is None:
-                from ..models.fitness.recommender import FitnessRecommender
+                from ..recommenders.fitness.recommender import FitnessRecommender
                 fit_rec = FitnessRecommender()
             # Fetch user's positive and negative fitness interactions
             try:
@@ -477,8 +467,7 @@ async def get_recommendations(
     except Exception:
         pass
 
-    # Final sanitization: replace any remaining NaN/Inf with None to ensure
-    # JSON serialization succeeds.
+    # Final sanitization:
     for d in nutr_list:
         for k, v in list(d.items()):
             try:
@@ -498,7 +487,7 @@ async def get_recommendations(
     meal_plan_output = None
     if rec_type in ('nutrition', 'all') and len(nutrition_df) > 0:
         try:
-            from ..models.nutrition.utils import generate_daily_meal_plan
+            from ..recommenders.nutrition.utils import generate_daily_meal_plan
             # Prepare liked_item_ids for meal plan generation
             liked_item_ids = liked_nutrition_ids if liked_nutrition_ids else set()
             # Define default meal calorie distribution
@@ -525,13 +514,13 @@ async def get_recommendations(
                 nutrition_df,
                 nutr_rec,                  # or None
                 meals=['Breakfast', 'Lunch', 'Dinner'],
-                items_per_meal=2,
+                items_per_meal=3,
                 top_k_candidates=80,
                 nutrition_targets=nutrition_targets,
                 meals_per_day=3,
                 diversity_overlap_threshold=0.5,
                 liked_item_ids=liked_item_ids,  # Force liked items into meal plan
-                meal_cal_dist=meal_cal_dist,  # Use calorie distribution
+                meal_cal_dist=meal_cal_dist, 
                 include_snacks=False,  # Set to True to add snack slot
                 similar_user_likes=similar_user_likes,  # Pass collaborative filtering likes
                 meal_context_map=meal_context_map  # Pass meal context for contextual boosting
@@ -591,9 +580,6 @@ async def get_recommendations(
         except Exception:
             continue
 
-    # Apply interaction boosts to the nutrition and fitness lists by re-ranking.
-    # Use any model/content score present (e.g., 'hybrid_score') as the base so
-    # interactions can add or subtract from a meaningful continuous score.
     LAMBDA_INTERACTION = 4.0
     LAMBDA_LIKED = 10.0  # Strong boost for explicitly liked items
 

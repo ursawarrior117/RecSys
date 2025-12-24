@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     # Use file-backed SQLite by default so the server processes share the same DB.
     DATABASE_URL: str = "sqlite:///./recsys.db"
-    MODEL_PATH: str = "models"
+    MODEL_PATH: str = "saved_models"
     
     # Allow extra environment variables (so .env can contain postgres_* vars etc.)
     model_config = {

@@ -71,7 +71,7 @@ class FitnessRecommender(BaseRecommender):
             interactions_flattened,
             epochs=10,
             batch_size=32,
-            verbose=0
+            verbose=1
         )
         # Store training-time interaction info for collaborative signals
         try:
@@ -107,8 +107,15 @@ class FitnessRecommender(BaseRecommender):
         scores = self.model.predict([user_features_repeated, activity_features], batch_size=128, verbose=0)
         return scores.flatten()
         
-    def generate_recommendations(self, user: dict, top_k: int = 5) -> pd.DataFrame:
-        """Generate fitness recommendations for a user with hybrid scoring."""
+    def generate_recommendations(self, user: dict, top_k: int = 5, mode: str = "hybrid") -> pd.DataFrame:
+        """Generate fitness recommendations for a user.
+        Args:
+            user: user feature dict
+            top_k: number of recommendations
+            mode: 'hybrid', 'collaborative', or 'content'
+        Returns:
+            DataFrame of top_k recommended items
+        """
         user_df = pd.DataFrame([user]).copy()
         if 'tdee' not in user_df.columns:
             user_df['tdee'] = user_df.apply(lambda r: calculate_tdee(r.get('weight', 0), r.get('height', 0), r.get('age', 30), r.get('gender', 'M'), r.get('activity_level', 'medium')), axis=1)
@@ -123,13 +130,28 @@ class FitnessRecommender(BaseRecommender):
         )
         user_features_repeated = np.repeat(user_features, len(activity_features), axis=0)
         scores = self.model.predict([user_features_repeated, activity_features], batch_size=128, verbose=0).flatten()
-        
-        # Item-based similarity scoring
+        df = self.database.copy()
+
+        # --- Collaborative: recommend by activity popularity ---
+        if mode == "collaborative":
+            if hasattr(self, "activity_popularity") and self.activity_popularity is not None:
+                pop_scores = self.activity_popularity
+                top_indices = np.argsort(pop_scores)[-top_k:][::-1]
+                return df.iloc[top_indices]
+            else:
+                # fallback to random if no popularity
+                top_indices = np.random.choice(len(df), size=top_k, replace=False)
+                return df.iloc[top_indices]
+
+        # --- Content-based: recommend by model score only ---
+        if mode == "content":
+            top_indices = np.argsort(scores)[-top_k:][::-1]
+            return df.iloc[top_indices]
+
+        # --- Hybrid: blend model and similarity ---
         sim_scores = np.zeros(len(scores))
         sim_neg = np.zeros(len(scores))
-        
         try:
-            # Check for explicit positive/negative activity ids from calling code
             pos_items = None
             neg_items = None
             if getattr(self, 'user_positive_item_ids', None):
@@ -144,13 +166,9 @@ class FitnessRecommender(BaseRecommender):
                     neg_items = [id_list.index(pid) for pid in self.user_negative_item_ids if pid in id_list]
                 except Exception:
                     neg_items = None
-
-            # Fallback: use training interactions matrix if available
             if pos_items is None and hasattr(self, 'interactions_matrix') and self.interactions_matrix is not None:
                 if self.interactions_matrix.shape[0] > 0:
                     pos_items = np.where(self.interactions_matrix[0] > 0)[0]
-
-            # Compute positive similarity
             if pos_items is not None and len(pos_items) > 0:
                 item_vecs = activity_features
                 norms = np.linalg.norm(item_vecs, axis=1, keepdims=True) + 1e-8
@@ -158,8 +176,6 @@ class FitnessRecommender(BaseRecommender):
                 for i in range(len(item_vecs_norm)):
                     sims = item_vecs_norm[pos_items] @ item_vecs_norm[i]
                     sim_scores[i] = np.max(sims) if len(sims) > 0 else 0.0
-
-            # Compute negative similarity (activities similar to disliked ones)
             if neg_items is not None and len(neg_items) > 0:
                 item_vecs = activity_features
                 norms = np.linalg.norm(item_vecs, axis=1, keepdims=True) + 1e-8
@@ -167,8 +183,6 @@ class FitnessRecommender(BaseRecommender):
                 for i in range(len(item_vecs_norm)):
                     sims = item_vecs_norm[neg_items] @ item_vecs_norm[i]
                     sim_neg[i] = np.max(sims) if len(sims) > 0 else 0.0
-
-            # Normalize similarity scores
             if sim_scores.size > 0:
                 smin, smax = sim_scores.min(), sim_scores.max()
                 if smax > smin:
@@ -184,29 +198,19 @@ class FitnessRecommender(BaseRecommender):
         except Exception:
             sim_scores = np.zeros(len(scores))
             sim_neg = np.zeros(len(scores))
-
-        # Blend model score and similarity
-        alpha = 0.7  # model score weight
+        alpha = 0.1  # model score weight
         smin, smax = scores.min(), scores.max()
         if smax > smin:
             norm_scores = (scores - smin) / (smax - smin)
         else:
             norm_scores = np.zeros_like(scores)
-
-        # negative_penalty controls how strongly dislikes reduce similarity influence
         negative_penalty = 0.8
         sim_effect = sim_scores - negative_penalty * sim_neg
         hybrid = alpha * norm_scores + (1.0 - alpha) * sim_effect
-
-        # Attach hybrid score for downstream reranking and API serialization
-        df = self.database.copy()
         try:
             df['hybrid_score'] = hybrid
         except Exception:
-            # Ensure lengths match; fallback to assigning via numpy
             df = df.reset_index(drop=True)
             df['hybrid_score'] = list(hybrid)
-
         top_indices = np.argsort(hybrid)[-top_k:][::-1]
-
         return df.iloc[top_indices]

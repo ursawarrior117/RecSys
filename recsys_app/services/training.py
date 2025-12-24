@@ -1,8 +1,8 @@
 """Training service that trains recommenders and persists models."""
 from recsys_app.database.session import SessionLocal, init_sample_data
 from recsys_app.database.models import User, NutritionItem, FitnessItem
-from recsys_app.models.nutrition.recommender import NutritionRecommender
-from recsys_app.models.fitness.recommender import FitnessRecommender
+from recsys_app.recommenders.nutrition.recommender import NutritionRecommender
+from recsys_app.recommenders.fitness.recommender import FitnessRecommender
 from recsys_app import model_io
 import pandas as pd
 import numpy as np
@@ -20,6 +20,8 @@ def train_and_persist_models(simulate_interactions: bool = True):
     If no interactions table exists, this function will simulate interactions when
     `simulate_interactions` is True.
     """
+    import logging
+    logging.getLogger().setLevel(logging.ERROR)
     init_sample_data()
     db = SessionLocal()
     try:
@@ -101,6 +103,7 @@ def train_and_persist_models(simulate_interactions: bool = True):
                     users_for_eval.append(u)
 
             # train on the train_mat
+            print("Training nutrition recommender...")
             nutr_rec.train(users_df, nutrition_df, train_mat)
 
             # Evaluate recommendations using the held-out test items
@@ -158,9 +161,11 @@ def train_and_persist_models(simulate_interactions: bool = True):
         else:
             # No recorded interactions -> train on simulated or provided interactions
             if nutr_interactions is not None:
+                print("Training nutrition recommender...")
                 nutr_rec.train(users_df, nutrition_df, nutr_interactions)
 
         if fit_interactions is not None and not fitness_df.empty:
+            print("Training fitness recommender...")
             fit_rec.train(users_df, fitness_df, fit_interactions)
 
         # Persist models and preprocessors
