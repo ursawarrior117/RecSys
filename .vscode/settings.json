@@ -1,0 +1,9 @@
+{
+  // Disable Python extension auto-activating virtual environments in the integrated terminal
+  "python.autoActivateEnvironment": false,
+  // older setting name for compatibility
+  "python.terminal.activateEnvironment": false
+}
+{
+    "python.analysis.autoImportCompletions": true
+}

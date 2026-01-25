@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+sqlalchemy
+python-dotenv
+tensorflow
+scikit-learn
+kagglehub
+alembic
+pytest
