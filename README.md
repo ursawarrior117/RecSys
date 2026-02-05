@@ -5,28 +5,45 @@ What it is
 - Backend: FastAPI (recsys_app.api). Models persisted to disk. DB via SQLAlchemy (DATABASE_URL).
 - Frontend: React (web-frontend) that calls the API.
 
-Quick start (Windows PowerShell)
-1. Backend (dev)
-   # optional: set virtualenv or activate conda
+Prerequisites
+- Python 3.10+ (3.11 is known to work; CPU TensorFlow recommended unless you have GPU), Node.js 16+ for frontend
+
+Installation (Windows PowerShell)
+1. Clone & enter repo
+   git clone https://github.com/ursawarrior117/RecSys.git
+   cd RecSys-main/RecSys-main
+
+2. Backend (dev)
+   # create and activate a virtual environment
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
+
+   # upgrade pip and install dependencies
+   python -m pip install --upgrade pip
    pip install -r requirements.txt
 
-   # start API (recommended)
-   python recommend_api.py
-   # or
-   uvicorn recommend_api:app --host 127.0.0.1 --port 8000 --reload
+   # Optionally pin exact versions (reproducible installs)
+   #   pip freeze > requirements.txt
 
-2. Frontend
+3. Run API (dev)
+   # run via module or use uvicorn for hot reload
+   python main.py
+   # or
+   uvicorn recsys_app.api:app --host 127.0.0.1 --port 8000 --reload
+
+4. Frontend
    cd web-frontend
    npm install
    npm start
 
-3. Seed DB (optional)
-   python seed_db.py
+5. Seed / Inspect DB
+   # optional helpers (from repo root)
+   python scripts/seed_db.py
+   python scripts/inspect_db.py
 
-4. Inspect DB
-   python inspect_db.py
+Notes
+- The repository excludes `.venv/` and large binary files from Git. Large artifacts were removed from history and a safety branch `backup-before-purge` was created (contains removed files). Use Git LFS or external storage for large assets.
+- If you need GPU TensorFlow builds, install them separately following TensorFlow's official docs.
 
 API
 - POST /recommend  -> body: { user: { ... }, item_type: "nutrition"|"fitness", top_k: 10 }

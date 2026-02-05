@@ -1,11 +1,15 @@
-fastapi
-uvicorn[standard]
-pandas
-numpy
-sqlalchemy
-python-dotenv
-tensorflow
-scikit-learn
-kagglehub
-alembic
-pytest
+# Minimum compatible versions (adjust as needed)
+fastapi>=0.95
+uvicorn[standard]>=0.18
+pandas>=1.5
+numpy>=1.23
+sqlalchemy>=1.4
+python-dotenv>=1.0
+tensorflow>=2.10
+scikit-learn>=1.1
+kagglehub>=0.0.3
+alembic>=1.8
+pytest>=7.0
+
+# To pin exact versions for reproducible installs:
+#   pip freeze > requirements.txt
