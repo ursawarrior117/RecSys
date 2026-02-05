@@ -78,6 +78,9 @@ class RecommendationResponse(BaseModel):
     nutrition_items: List[NutritionItemResponse]
     fitness_items: List[FitnessItemResponse]
     tdee: Optional[float] = None
+    bmi: Optional[float] = None
+    user_height: Optional[float] = None
+    user_weight: Optional[float] = None
     nutrition_goal: Optional[float] = None
     bmr: Optional[float] = None
     nutrition_targets: Optional[dict] = None

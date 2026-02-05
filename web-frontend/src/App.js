@@ -18,6 +18,9 @@ function App() {
   });
   const [userCreated, setUserCreated] = useState(false);
   const [tdee, setTdee] = useState(null);
+  const [bmi, setBmi] = useState(null);
+  const [userHeight, setUserHeight] = useState(null);
+  const [userWeight, setUserWeight] = useState(null);
   const [selectedBodypart, setSelectedBodypart] = useState(null);
   const [bmr, setBmr] = useState(null);
   const [nutritionTargets, setNutritionTargets] = useState(null);
@@ -45,11 +48,17 @@ function App() {
     try {
       const res = await fetch(`/api/recommendations/${uid}?top_k=5`);
       const data = await res.json();
+      console.log('[getRecommendationsForUser] API Response:', data);
+      console.log('[getRecommendationsForUser] BMI:', data.bmi, 'Height:', data.user_height, 'Weight:', data.user_weight);
       setRecommendations(data);
       // extract meal plan and nutrition stats if present
       if (data) {
         setTdee(data.tdee ?? null);
+        setBmi(data.bmi ?? null);
+        setUserHeight(data.user_height ?? null);
+        setUserWeight(data.user_weight ?? null);
         setBmr(data.bmr ?? null);
+        console.log('[setters] After setState - bmi should be:', data.bmi, 'userHeight should be:', data.user_height);
         if (data.nutrition_targets) {
           setNutritionTargets(data.nutrition_targets);
         }
@@ -124,28 +133,29 @@ function App() {
 
 
   const cardStyle = {
-    border: '1px solid #e0e0e0',
-    borderRadius: 8,
-    padding: '1.5rem',
+    border: '1px solid #e2e8f0',
+    borderRadius: '12px',
+    padding: '24px',
     background: '#fff',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-    marginBottom: '1.5rem'
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+    marginBottom: '24px'
   };
 
   const buttonStyle = {
-    padding: '0.6rem 1rem',
-    borderRadius: 4,
-    border: '1px solid #ddd',
+    padding: '10px 16px',
+    borderRadius: '6px',
+    border: '1px solid #cbd5e0',
     background: '#fff',
     cursor: 'pointer',
-    fontSize: 14,
-    fontWeight: 500,
-    transition: 'all 0.2s'
+    fontSize: '14px',
+    fontWeight: '500',
+    transition: 'all 0.2s ease',
+    color: '#4a5568'
   };
 
   const buttonPrimaryStyle = {
     ...buttonStyle,
-    background: '#007bff',
+    background: '#3182ce',
     color: '#fff',
     border: 'none'
   };
@@ -208,12 +218,20 @@ function App() {
   }
 
   return (
-    <div style={{ padding: "2rem", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif", background: '#f9fafb', minHeight: '100vh' }}>
+    <div style={{ padding: "32px 20px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif", background: '#f8f9fa', minHeight: '100vh' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <h1 style={{ marginBottom: '0.5rem', fontSize: 28, fontWeight: 700, color: '#1f2937' }}>Nutrition Recommender System</h1>
-        <p style={{ color: '#6b7280', marginBottom: '2rem', fontSize: 14 }}>Create users, load recommendations, and track interactions</p>
+        {/* Header Section */}
+        <div style={{ marginBottom: '32px', paddingBottom: '24px', borderBottom: '1px solid #e2e8f0' }}>
+          <h1 style={{ marginBottom: '8px', fontSize: '32px', fontWeight: '700', color: '#1a202c' }}>
+            Nutrition & Fitness Recommender
+          </h1>
+          <p style={{ color: '#718096', marginBottom: '0', fontSize: '15px', lineHeight: '1.6' }}>
+            Get personalized nutrition and fitness recommendations based on your goals and preferences
+          </p>
+        </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+        {/* Main Grid Layout */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', marginBottom: '24px' }}>
 
           {/* Create User Section (moved to UserForm component) */}
           <div style={cardStyle}>
@@ -225,6 +243,9 @@ function App() {
                 if (data) {
                   setRecommendations(data);
                   setTdee(data.tdee ?? null);
+                  setBmi(data.bmi ?? null);
+                  setUserHeight(data.user_height ?? null);
+                  setUserWeight(data.user_weight ?? null);
                   setBmr(data.bmr ?? null);
                   if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
                   if (data.meal_plan) setMealPlan(data.meal_plan);
@@ -237,47 +258,51 @@ function App() {
 
           {/* Load User Section */}
           <div style={cardStyle}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: '1rem', color: '#1f2937' }}>Load Existing User</h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
-              <input 
-                type="text" 
-                placeholder="Search by ID, age, weight..." 
-                value={userSearchQuery} 
-                onChange={(e) => { setUserSearchQuery(e.target.value); setUserPageIndex(0); }}
-                style={{ padding: '0.6rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 14 }}
-              />
-              <select 
-                value={loadUserId} 
-                onChange={(e) => setLoadUserId(e.target.value)}
-                size={6}
-                style={{ padding: '0.6rem', borderRadius: 4, border: '1px solid #ddd', fontSize: 13, fontFamily: 'monospace' }}
-              >
-                <option value="">Select user...</option>
-                {users.filter(u => 
-                  userSearchQuery === '' || String(u.id).includes(userSearchQuery) || String(u.age).includes(userSearchQuery) || String(u.weight).includes(userSearchQuery)
-                ).map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {`ID ${u.id} • age:${u.age} wt:${u.weight}kg • ${u.interaction_count || 0} interactions`}
-                  </option>
-                ))}
-              </select>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: '#1a202c' }}>Load Existing User</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#4a5568', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Search Users</label>
+                <input 
+                  type="text" 
+                  placeholder="Search by ID, age, weight..." 
+                  value={userSearchQuery} 
+                  onChange={(e) => { setUserSearchQuery(e.target.value); setUserPageIndex(0); }}
+                  style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '14px', width: '100%' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '6px', fontWeight: '500', color: '#4a5568', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Select User</label>
+                <select 
+                  value={loadUserId} 
+                  onChange={(e) => setLoadUserId(e.target.value)}
+                  size={6}
+                  style={{ padding: '10px 12px', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', fontFamily: 'monospace', width: '100%' }}
+                >
+                  <option value="">Select user...</option>
+                  {users.filter(u => 
+                    userSearchQuery === '' || String(u.id).includes(userSearchQuery) || String(u.age).includes(userSearchQuery) || String(u.weight).includes(userSearchQuery)
+                  ).map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {`ID ${u.id} • age:${u.age} wt:${u.weight}kg • ${u.interaction_count || 0} interactions`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button onClick={async () => { if (!loadUserId) { alert('Select a user'); return; } await loadExistingUser(); }} style={buttonPrimaryStyle} title="Load and fetch recommendations for selected user">Load User</button>
                 <button onClick={() => fetchUsers(userPageIndex * usersPerPage)} style={buttonStyle}>Refresh</button>
                 <button onClick={() => { if (userPageIndex > 0) fetchUsers((userPageIndex - 1) * usersPerPage); }} style={buttonStyle}>← Prev</button>
                 <button onClick={() => { fetchUsers((userPageIndex + 1) * usersPerPage); }} style={buttonStyle}>Next →</button>
-                <span style={{ marginLeft: 'auto', alignSelf: 'center', color: '#6b7280', fontSize: 12 }}>Page {userPageIndex + 1}</span>
+                <span style={{ marginLeft: 'auto', alignSelf: 'center', color: '#718096', fontSize: '12px' }}>Page {userPageIndex + 1}</span>
               </div>
               {userCreated && (
-                <div style={{ padding: '0.75rem', background: '#d1fae5', borderRadius: 4, fontSize: 13, color: '#065f46' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ padding: '12px', background: '#c6f6d5', borderRadius: '6px', fontSize: '13px', color: '#22543d', border: '1px solid #9ae6b4' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', justifyContent: 'space-between' }}>
                     <div>✓ Current User ID: <strong>{userId}</strong></div>
                     <button
                       onClick={async () => {
                         if (!window.confirm('Delete this user and their interactions? This cannot be undone.')) return;
                         try {
-                          // Immediately clear client-side user state and recommendations
-                          // to prevent impression logging during the deletion flow.
                           window.__USER_CREATED__ = false;
                           setUserCreated(false);
                           setUserId(0);
@@ -292,9 +317,9 @@ function App() {
                           alert('Failed to delete user');
                         }
                       }}
-                      style={{ padding: '0.25rem 0.6rem', borderRadius: 4, background: '#ef4444', color: '#fff', border: 'none', cursor: 'pointer' }}
+                      style={{ padding: '6px 12px', borderRadius: '4px', background: '#f56565', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '12px', fontWeight: '500' }}
                     >
-                      Clear User
+                      Delete User
                     </button>
                   </div>
                 </div>
@@ -306,14 +331,14 @@ function App() {
 
         {/* Recommendations Section */}
         <div style={cardStyle}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: '1rem', color: '#1f2937' }}>Get Recommendations</h2>
+          <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '16px', color: '#1a202c' }}>Get Recommendations</h2>
           {!userCreated ? (
-            <div style={{ padding: '1rem', background: '#fef2f2', borderRadius: 4, color: '#7f1d1d', fontSize: 13 }}>
-              Create a user first using the form above.
+            <div style={{ padding: '16px', background: '#fed7d7', borderRadius: '6px', color: '#742a2a', fontSize: '14px', border: '1px solid #fc8181' }}>
+              ✓ Create a user first using the form on the left to get started.
             </div>
           ) : (
             <div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
                 <button type="button" onClick={async () => {
                   try {
                     const res = await fetch(`/api/recommendations/${userId}?top_k=5&rec_type=all`);
@@ -321,6 +346,9 @@ function App() {
                     setRecommendations(data);
                     if (data) {
                       setTdee(data.tdee ?? null);
+                      setBmi(data.bmi ?? null);
+                      setUserHeight(data.user_height ?? null);
+                      setUserWeight(data.user_weight ?? null);
                       setBmr(data.bmr ?? null);
                       if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
                       if (data.meal_plan) setMealPlan(data.meal_plan);
@@ -338,6 +366,9 @@ function App() {
                     setSelectedBodypart(null);
                     if (data) {
                       setTdee(data.tdee ?? null);
+                      setBmi(data.bmi ?? null);
+                      setUserHeight(data.user_height ?? null);
+                      setUserWeight(data.user_weight ?? null);
                       setBmr(data.bmr ?? null);
                       if (data.nutrition_targets) setNutritionTargets(data.nutrition_targets);
                       if (data.meal_plan) setMealPlan(data.meal_plan);
@@ -345,7 +376,7 @@ function App() {
                   } catch (e) {
                     console.debug('Failed to fetch recommendations', e);
                   }
-                }} style={{...buttonPrimaryStyle, background: '#f59e0b'}}>Nutrition Only</button>
+                }} style={{...buttonPrimaryStyle, background: '#d69e2e'}}>Nutrition Only</button>
                 
                 <button type="button" onClick={async () => {
                   try {
@@ -359,27 +390,31 @@ function App() {
                     setNutritionTargets(null);
                     if (data) {
                       setTdee(data.tdee ?? null);
+                      setBmi(data.bmi ?? null);
+                      setUserHeight(data.user_height ?? null);
+                      setUserWeight(data.user_weight ?? null);
                       setBmr(data.bmr ?? null);
                     }
                   } catch (e) {
                     console.debug('Failed to fetch recommendations', e);
                   }
-                }} style={{...buttonPrimaryStyle, background: '#10b981'}}>Fitness Only</button>
+                }} style={{...buttonPrimaryStyle, background: '#38a169'}}>Fitness Only</button>
               </div>
 
               {/* Body Part Filter for Fitness */}
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ fontSize: 13, fontWeight: 600, color: '#374151', marginRight: 8 }}>Filter Fitness by Body Part:</label>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ fontSize: '13px', fontWeight: '600', color: '#4a5568', marginRight: '8px', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Filter by Body Part</label>
                 <select 
                   value={selectedBodypart || ''} 
                   onChange={(e) => setSelectedBodypart(e.target.value || null)}
                   style={{
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: 4,
-                    border: '1px solid #d1d5db',
-                    fontSize: 13,
+                    padding: '10px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #e2e8f0',
+                    fontSize: '14px',
                     background: '#fff',
-                    cursor: 'pointer'
+                    cursor: 'pointer',
+                    width: '100%'
                   }}
                 >
                   <option value="">All Body Parts</option>
@@ -400,92 +435,139 @@ function App() {
         {/* Unified Stats Card with large daily/weekly numbers and meal distribution pie */}
         {userCreated && tdee && (
           <div style={cardStyle}>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flexWrap: 'wrap' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: '#1a202c' }}>Your Daily Targets</h2>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'stretch', flexWrap: 'wrap' }}>
               {/* Left big calories box */}
-              <div style={{ width: 320, background: '#fff8eb', borderRadius: 12, padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.03)' }}>
-                <div style={{ color: '#9a7a2b', fontSize: 13, marginBottom: 8 }}>Your Maintenance Calories</div>
-                <div style={{ fontSize: 48, fontWeight: 800, color: '#1f2937', lineHeight: 1 }}>{Math.round(tdee)}</div>
-                <div style={{ color: '#6b7280', marginTop: 6 }}>calories per day</div>
+              <div style={{ flex: '0 0 auto', width: '280px', background: 'linear-gradient(135deg, #f6e5c3 0%, #fa7e1e 100%)', borderRadius: '12px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', boxShadow: '0 4px 12px rgba(250, 126, 30, 0.2)' }}>
+                <div style={{ color: 'rgba(0,0,0,0.6)', fontSize: '13px', marginBottom: '8px', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Daily Calories Goal</div>
+                <div style={{ fontSize: '48px', fontWeight: '800', color: '#fff', lineHeight: '1', textShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>{Math.round(tdee)}</div>
+                <div style={{ color: 'rgba(255,255,255,0.9)', marginTop: '8px', fontSize: '13px', fontWeight: '500' }}>kcal per day</div>
               </div>
 
               {/* Right side: small stat cards, activity table and pie chart */}
-              <div style={{ flex: 1, minWidth: 360, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <div style={{ flex: 1, padding: '12px', borderRadius: 8, background: '#f0fdf4', borderLeft: '4px solid #22c55e' }}>
-                    <div style={{ fontSize: 12, color: '#666' }}>Basal Metabolic Rate</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: '#16a34a' }}>{bmr ? Math.round(bmr) : '—'}</div>
-                    <div style={{ fontSize: 12, color: '#999' }}>kcal/day</div>
+              <div style={{ flex: '1', minWidth: '360px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ flex: '1', padding: '16px', borderRadius: '8px', background: 'linear-gradient(135deg, #d4fc79 0%, #96e6a1 100%)', borderLeft: '4px solid #22c55e' }}>
+                    <div style={{ fontSize: '12px', color: '#22543d', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px' }}>BMR</div>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: '#065f46' }}>{bmr ? Math.round(bmr) : '—'}</div>
+                    <div style={{ fontSize: '12px', color: '#22543d' }}>kcal/day</div>
                   </div>
-                  <div style={{ flex: 1, padding: '12px', borderRadius: 8, background: '#fff8eb', borderLeft: '4px solid #d97706' }}>
-                    <div style={{ fontSize: 12, color: '#666' }}>Daily Protein Goal</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: '#1d4ed8' }}>{nutritionTargets && nutritionTargets.protein_g ? Math.round(nutritionTargets.protein_g) : '—'}</div>
-                    <div style={{ fontSize: 12, color: '#999' }}>grams/day</div>
+                  <div style={{ flex: '1', padding: '16px', borderRadius: '8px', background: 'linear-gradient(135deg, #fed7aa 0%, #fb923c 100%)', borderLeft: '4px solid #f97316' }}>
+                    <div style={{ fontSize: '12px', color: '#7c2d12', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Protein Goal</div>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: '#92400e' }}>{nutritionTargets && nutritionTargets.protein_g ? Math.round(nutritionTargets.protein_g) : '—'}</div>
+                    <div style={{ fontSize: '12px', color: '#92400e' }}>grams/day</div>
+                  </div>
+                  <div style={{ flex: '1', padding: '16px', borderRadius: '8px', background: 'linear-gradient(135deg, #cffafe 0%, #67e8f9 100%)', borderLeft: '4px solid #06b6d4' }}>
+                    <div style={{ fontSize: '12px', color: '#164e63', fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px' }}>BMI</div>
+                    <div style={{ fontSize: '24px', fontWeight: '700', color: '#0c4a6e' }}>{bmi ? bmi.toFixed(1) : '—'}</div>
+                    <div style={{ fontSize: '12px', color: '#164e63' }}>kg/m²</div>
                   </div>
                 </div>
+
+                {/* BMI Details Section */}
+                {(() => {
+                  console.log('BMI Section - bmi:', bmi, 'userHeight:', userHeight, 'userForm.height:', userForm?.height);
+                  // Use userHeight from API, fallback to form height, then fallback to 170
+                  const displayHeight = userHeight || (userForm?.height ? parseFloat(userForm.height) : 170);
+                  const showBmiDetails = bmi !== null && bmi !== undefined;
+                  console.log('Show BMI Details?', showBmiDetails, 'displayHeight:', displayHeight);
+                  return showBmiDetails ? (
+                    <div style={{ padding: '24px', borderRadius: '12px', background: '#f5f5f5', border: '1px solid #e0e0e0', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '30px' }}>
+                        {/* Left: BMI Value & Category */}
+                        <div style={{ minWidth: '100px' }}>
+                          <div style={{ fontSize: '48px', fontWeight: '800', color: '#1a1a1a' }}>{bmi.toFixed(1)}</div>
+                          <div style={{ fontSize: '13px', fontWeight: '600', color: '#0066cc', marginTop: '8px', lineHeight: '1.4' }}>
+                            {bmi < 18.5 ? 'Underweight' : bmi < 25 ? 'Normal Weight' : bmi < 30 ? 'Overweight' : 'Obese'}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: '8px', lineHeight: '1.4' }}>
+                            Healthy Weight Range:<br />{displayHeight ? `${(18.5 * (displayHeight / 100) ** 2).toFixed(1)} - ${(24.9 * (displayHeight / 100) ** 2).toFixed(1)} kg` : '—'}
+                          </div>
+                        </div>
+
+                        {/* Right: Classification Chart */}
+                        <div style={{ flex: 1 }}>
+                          {/* Chart Labels */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', fontWeight: '600', color: '#666' }}>
+                            <div style={{ textAlign: 'center', flex: 1 }}>Underweight<br />&lt; 18.5</div>
+                            <div style={{ textAlign: 'center', flex: 1 }}>Normal<br />18.5-25</div>
+                            <div style={{ textAlign: 'center', flex: 1 }}>Overweight<br />25-30</div>
+                            <div style={{ textAlign: 'center', flex: 1 }}>Obese<br />&gt; 30</div>
+                          </div>
+
+                          {/* Chart Bar with Pointer */}
+                          <div style={{ position: 'relative', marginBottom: '8px', paddingTop: '28px' }}>
+                            <div style={{ display: 'flex', gap: '2px', height: '32px', borderRadius: '4px', overflow: 'visible' }}>
+                              <div style={{ flex: 1, background: '#b3d9ff', border: bmi < 18.5 ? '3px solid #0066cc' : 'none' }}></div>
+                              <div style={{ flex: 1, background: '#66b3ff', border: (bmi >= 18.5 && bmi < 25) ? '3px solid #0066cc' : 'none' }}></div>
+                              <div style={{ flex: 1, background: '#3366ff', border: (bmi >= 25 && bmi < 30) ? '3px solid #0066cc' : 'none' }}></div>
+                              <div style={{ flex: 1, background: '#0033cc', border: bmi >= 30 ? '3px solid #0066cc' : 'none' }}></div>
+                            </div>
+                            
+                            {/* Pointer Arrow positioned at middle of BMI category */}
+                            {(() => {
+                              // Position pointer at the middle of each BMI category
+                              let pointerPercent = 0;
+                              if (bmi < 18.5) {
+                                // Underweight: middle at 12.5%
+                                pointerPercent = 12.5;
+                              } else if (bmi < 25) {
+                                // Normal: middle at 37.5%
+                                pointerPercent = 37.5;
+                              } else if (bmi < 30) {
+                                // Overweight: middle at 62.5%
+                                pointerPercent = 62.5;
+                              } else {
+                                // Obese: middle at 87.5%
+                                pointerPercent = 87.5;
+                              }
+                              return (
+                                <div style={{ 
+                                  position: 'absolute', 
+                                  left: `calc(${pointerPercent}% - 8px)`,
+                                  top: '0',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: '2px'
+                                }}>
+                                  <div style={{ fontSize: '11px', fontWeight: '700', color: '#1a1a1a', whiteSpace: 'nowrap' }}>You</div>
+                                  <div style={{ width: '0', height: '0', borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: '8px solid #1a1a1a' }}></div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
 
                 {/* Lower panel: activity table and TDEE chart */}
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <div style={{ flex: 1, padding: 14, borderRadius: 8, background: '#fff', border: '1px solid #eef2f7' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8 }}>Estimates by activity level</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                      <div style={{ flex: 1, color: '#4b5563' }}>
-                        <div style={{ padding: '6px 0' }}>Low</div>
-                        <div style={{ padding: '6px 0' }}>Medium</div>
-                        <div style={{ padding: '6px 0' }}>High</div>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ flex: '1', padding: '16px', borderRadius: '8px', background: '#f8f9fa', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#1a202c', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Activity Estimates</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+                      <div style={{ flex: '1', color: '#4a5568' }}>
+                        <div style={{ padding: '6px 0', fontSize: '13px' }}>Low</div>
+                        <div style={{ padding: '6px 0', fontSize: '13px' }}>Medium</div>
+                        <div style={{ padding: '6px 0', fontSize: '13px' }}>High</div>
                       </div>
-                      <div style={{ minWidth: 110, textAlign: 'right', color: '#111827', fontWeight: 600 }}>
-                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.2) : '—'} kcal</div>
-                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.55) : '—'} kcal</div>
-                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.725) : '—'} kcal</div>
+                      <div style={{ minWidth: '110px', textAlign: 'right', color: '#1a202c', fontWeight: '700', fontSize: '13px' }}>
+                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.2) : '—'}</div>
+                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.55) : '—'}</div>
+                        <div style={{ padding: '6px 0' }}>{bmr ? Math.round(bmr * 1.725) : '—'}</div>
                       </div>
                     </div>
                   </div>
 
-                  <div style={{ width: 240, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #eef2f7', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8 }}>TDEE distribution</div>
+                  <div style={{ width: '220px', padding: '16px', borderRadius: '8px', background: '#f8f9fa', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#1a202c', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>TDEE Breakdown</div>
                     <div>
                       {bmr && tdee ? (
                         <MealPieChart bmr={bmr} tdee={tdee} size={140} />
                       ) : (
-                        <div style={{ color: '#6b7280' }}>No TDEE data</div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <div style={{ flex: 1, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #eef2f7' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8 }}>Estimates by activity level</div>
-                    <div style={{ fontSize: 13, color: '#6b7280' }}>
-                      {bmr ? (
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                          <tbody>
-                            {[
-                              ['Low', 1.2],
-                              ['Medium', 1.55],
-                              ['High', 1.725]
-                            ].map(([label, mult]) => (
-                              <tr key={label}>
-                                <td style={{ padding: '4px 6px', color: '#4b5563' }}>{label}</td>
-                                <td style={{ textAlign: 'right', padding: '4px 6px', color: '#111827', fontWeight: 600 }}>{Math.round(bmr * mult)} kcal</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div>Calorie breakdown requires your BMR; create or load a user to see detailed estimates.</div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Pie chart: meal distribution (Breakfast/Lunch/Dinner/Snacks) */}
-                  <div style={{ width: 220, padding: 12, borderRadius: 8, background: '#fff', border: '1px solid #eef2f7', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: '#374151', marginBottom: 8 }}>TDEE distribution</div>
-                    <div>
-                      {bmr && tdee ? (
-                        <MealPieChart bmr={bmr} tdee={tdee} size={140} />
-                      ) : (
-                        <div style={{ color: '#6b7280' }}>No TDEE data</div>
+                        <div style={{ color: '#718096', fontSize: '13px' }}>No data</div>
                       )}
                     </div>
                   </div>
@@ -498,338 +580,152 @@ function App() {
         {/* Recommendations Display */}
         {recommendations ? (
           <div style={cardStyle}>
-              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: '1.5rem', color: '#1f2937' }}>Recommendations & Meal Plan</h2>
-              {mealPlan && (
-                <div style={{ marginBottom: '2rem' }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: '0.8rem', color: '#374151' }}>Daily Meal Plan</h3>
-                      {recommendations.daily_protein !== undefined && recommendations.daily_calories !== undefined && (
-                        <div style={{ marginBottom: 8, fontSize: 13 }}>
-                          <strong>Goal:</strong> {Math.round(recommendations.daily_protein || 0)} g protein • {Math.round(recommendations.daily_calories || 0)} kcal
-                          {recommendations.daily_fiber !== undefined && recommendations.daily_magnesium !== undefined ?
-                            ` • ${Math.round(recommendations.daily_fiber || 0)} g fiber • ${Math.round(recommendations.daily_magnesium || 0)} mg magnesium` : ''}
-                          {recommendations.daily_magnesium_pct ? ` (${Math.round(recommendations.daily_magnesium_pct)}% RDA)` : ''}
-                          {recommendations.magnesium_warning ? (
-                            <span style={{ color: '#b91c1c', marginLeft: 8, fontWeight: 600 }}>High magnesium — review servings</span>
-                          ) : null}
-                        </div>
-                      )}
-                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    {Object.keys(mealPlan).map((mealName) => {
-                      const items = mealPlan[mealName] || [];
-                      // compute meal totals
-                      const totals = items.reduce(
-                        (acc, it) => {
-                          acc.calories += Number(it.calories || 0);
-                          acc.protein += Number(it.protein || 0);
-                          acc.carbs += Number(it.carbohydrates || it.carbs_g || 0);
-                          acc.fat += Number(it.fat || 0);
-                          acc.fiber += Number(it.fiber || 0);
-                          acc.magnesium += Number(it.magnesium || 0);
-                          return acc;
-                        },
-                        { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, magnesium: 0 }
-                      );
-
-                      return (
-                        <div
-                          key={mealName}
-                          style={{
-                            minWidth: 240,
-                            flex: '1 1 240px',
-                            border: '1px solid #e6e6e6',
-                            borderRadius: 8,
-                            padding: 12,
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                            background: '#fff'
-                          }}
-                        >
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                            <strong>{mealName}</strong>
-                            <small style={{ color: '#666' }}>{items.length} items</small>
-                          </div>
-
-                          <ul style={{ padding: 0, margin: 0, listStyle: 'none' }}>
-                            {items.map((it, i) => (
-                              <li key={it.id || `${mealName}-${i}`} style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px dashed #f0f0f0' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                  <div>
-                                    <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                                      {it.food || it.name}
-                                      {it.reason === 'liked' && <span style={{ fontSize: 11, background: '#d1fae5', color: '#065f46', padding: '2px 6px', borderRadius: 3 }}>Liked</span>}
-                                      {it.reason === 'snack' && <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: 3 }}>Snack</span>}
-                                    </div>
-                                    <div style={{ fontSize: 12, color: '#666' }}>
-                                      {it.category ? `${it.category}` : ''}
-                                      {it.tags ? ` • ${it.tags}` : ''}
-                                    </div>
-                                  </div>
-                                      <div style={{ textAlign: 'right', fontSize: 12, color: '#333' }}>
-                                        <div>{Math.round(Number(it.calories || 0))} kcal</div>
-                                        <div style={{ fontSize: 11, color: '#666' }}>{Math.round(Number(it.protein || 0))} g protein</div>
-                                        {it.serving_multiplier && it.serving_multiplier > 1.05 && 
-                                          <div style={{ fontSize: 11, color: '#666', fontStyle: 'italic' }}>x{it.serving_multiplier.toFixed(1)}</div>
-                                        }
-                                      </div>
-                                </div>
-                                <div style={{ marginTop: 6, fontSize: 12, color: '#444' }}>
-                                  <span style={{ marginRight: 10 }}>Carbs: {Math.round(Number(it.carbohydrates || it.carbs_g || 0))} g</span>
-                                  <span style={{ marginRight: 10 }}>Fat: {Math.round(Number(it.fat || 0))} g</span>
-                                  <span style={{ marginRight: 10 }}>Fiber: {Math.round(Number(it.fiber || 0))} g</span>
-                                  <span>Magnesium: {Math.round(Number(it.magnesium || 0))} mg</span>
-                                </div>
-                                <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                                      <button
-                                        onClick={async () => {
-                                          const nid = it.id || it.item_id || null;
-                                          if (!nid) return;
-                                          if (!userCreated) {
-                                            alert('Create or load a user before interacting');
-                                            return;
-                                          }
-                                          // optimistic UI: mark liked
-                                          setLikedItemIds(prev => {
-                                            const next = new Set(prev);
-                                            next.add(nid);
-                                            return next;
-                                          });
-                                          // ensure disliked state is cleared locally
-                                          setDislikedItemIds(prev => {
-                                            const next = new Set(prev);
-                                            next.delete(nid);
-                                            return next;
-                                          });
-                                          try {
-                                            await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'like' });
-                                            // refresh recommendations to reflect CF signal
-                                            await getRecommendationsForUser(userId);
-                                          } catch (e) {
-                                            console.error('Failed to log like interaction', e);
-                                            setLikedItemIds(prev => {
-                                              const next = new Set(prev);
-                                              next.delete(nid);
-                                              return next;
-                                            });
-                                            alert('Failed to record like');
-                                          }
-                                        }}
-                                        disabled={likedItemIds.has(it.id || it.item_id)}
-                                        style={{ marginTop: 6, padding: '0.3rem 0.6rem', borderRadius: 4, background: likedItemIds.has(it.id || it.item_id) ? '#d1fae5' : undefined }}
-                                      >{likedItemIds.has(it.id || it.item_id) ? 'Liked' : 'Like'}</button>
-
-                                      <button
-                                        onClick={async () => {
-                                          const nid = it.id || it.item_id || null;
-                                          if (!nid) return;
-                                          if (!userCreated) {
-                                            alert('Create or load a user before interacting');
-                                            return;
-                                          }
-                                          // optimistic UI: mark disliked
-                                          setDislikedItemIds(prev => {
-                                            const next = new Set(prev);
-                                            next.add(nid);
-                                            return next;
-                                          });
-                                          // ensure liked state is cleared locally
-                                          setLikedItemIds(prev => {
-                                            const next = new Set(prev);
-                                            next.delete(nid);
-                                            return next;
-                                          });
-                                          try {
-                                            await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'dislike' });
-                                            // refresh recommendations to reflect CF signal
-                                            await getRecommendationsForUser(userId);
-                                          } catch (e) {
-                                            console.error('Failed to log dislike interaction', e);
-                                            setDislikedItemIds(prev => {
-                                              const next = new Set(prev);
-                                              next.delete(nid);
-                                              return next;
-                                            });
-                                            alert('Failed to record dislike');
-                                          }
-                                        }}
-                                        disabled={dislikedItemIds.has(it.id || it.item_id)}
-                                        style={{ marginTop: 6, padding: '0.3rem 0.6rem', borderRadius: 4, background: dislikedItemIds.has(it.id || it.item_id) ? '#fee2e2' : undefined }}
-                                      >{dislikedItemIds.has(it.id || it.item_id) ? 'Disliked' : 'Dislike'}</button>
-                                    </div>
-                              </li>
-                            ))}
-                          </ul>
-
-                          <div style={{ marginTop: 10, borderTop: '1px solid #fafafa', paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                            <div style={{ fontWeight: 600 }}>Meal total</div>
-                            <div style={{ textAlign: 'right' }}>
-                              <div>{Math.round(totals.calories)} kcal</div>
-                              <div style={{ color: '#666' }}>{Math.round(totals.protein)} g protein</div>
-                              <div style={{ color: '#666' }}>{Math.round(totals.fiber)} g fiber • {Math.round(totals.magnesium)} mg magnesium</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+            <h2 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: '#1a202c' }}>Recommendations & Meal Plan</h2>
+            
+            {/* BMI-Based Recommendation Card */}
+            {bmi !== null && (
+              <div style={{ marginBottom: '20px', padding: '16px', borderRadius: '8px', border: '1px solid #e2e8f0', background: bmi < 18.5 ? '#fef3c7' : bmi < 25 ? '#d1fae5' : bmi < 30 ? '#fed7aa' : '#fecaca' }}>
+                <div style={{ fontWeight: '600', fontSize: '14px', marginBottom: '8px', color: bmi < 18.5 ? '#92400e' : bmi < 25 ? '#065f46' : bmi < 30 ? '#92400e' : '#7f1d1d' }}>
+                  {bmi < 18.5 ? '⚡ Underweight Recommendation' : bmi < 25 ? '✓ Healthy Weight Recommendation' : bmi < 30 ? '⚠ Overweight Recommendation' : '🚨 Obese Recommendation'}
                 </div>
-              )}
+                <div style={{ fontSize: '13px', color: bmi < 18.5 ? '#78350f' : bmi < 25 ? '#15803d' : bmi < 30 ? '#b45309' : '#991b1b', lineHeight: '1.5' }}>
+                  {bmi < 18.5 ? (
+                    <>
+                      Your BMI is below the healthy range. Focus on <strong>increasing calorie intake</strong> with nutrient-dense foods. Aim for <strong>protein-rich meals</strong> to build muscle mass. Include healthy fats (nuts, oils, avocado) and increase portion sizes. Consider strength training combined with adequate nutrition.
+                    </>
+                  ) : bmi < 25 ? (
+                    <>
+                      Your BMI is in the healthy range! <strong>Maintain your current habits</strong> and follow the recommended meal plan. Continue with <strong>regular exercise</strong> and balanced nutrition to sustain your health.
+                    </>
+                  ) : bmi < 30 ? (
+                    <>
+                      Your BMI is in the overweight range. <strong>Create a modest caloric deficit</strong> through balanced meals and regular exercise. Reduce processed foods and sugar, increase fiber intake, and aim for <strong>150+ minutes of moderate exercise</strong> per week. Follow the recommended meal plan carefully.
+                    </>
+                  ) : (
+                    <>
+                      Your BMI indicates obesity. <strong>Consult with a healthcare provider</strong> before making major dietary changes. Focus on <strong>gradual, sustainable lifestyle changes</strong>: increase physical activity gradually, reduce caloric intake moderately, and prioritize whole foods. Professional guidance is recommended.
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
 
-              {/* Fitness Recommendations Section */}
-              {recommendations.fitness_items && recommendations.fitness_items.length > 0 && (
-                <div style={{ marginTop: '2rem' }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: '1rem', color: '#374151' }}>Fitness Recommendations</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-                    {recommendations.fitness_items.map((activity, idx) => (
-                      <div
-                        key={activity.id || idx}
-                        style={{
-                          border: '1px solid #e6e6e6',
-                          borderRadius: 8,
-                          padding: 16,
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                          background: '#fff',
-                          transition: 'transform 0.2s, box-shadow 0.2s',
-                          cursor: 'pointer'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'translateY(-2px)';
-                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'translateY(0)';
-                          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)';
-                        }}
-                      >
-                        <div style={{ marginBottom: 12 }}>
-                          <div style={{ fontSize: 16, fontWeight: 700, color: '#1f2937', marginBottom: 4 }}>{activity.name}</div>
-                          <div style={{ fontSize: 13, color: '#666', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.type}</span>
-                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.level}</span>
-                            <span style={{ background: '#f3f4f6', padding: '2px 8px', borderRadius: 12 }}>{activity.bodypart}</span>
-                          </div>
+            {mealPlan && (
+              <div style={{ marginBottom: '32px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', color: '#1a202c' }}>Daily Meal Plan</h3>
+                {recommendations.daily_protein !== undefined && recommendations.daily_calories !== undefined && (
+                  <div style={{ marginBottom: '16px', padding: '12px', background: '#f0f9ff', borderRadius: '6px', border: '1px solid #bae6fd', fontSize: '14px' }}>
+                    <strong style={{ color: '#0369a1' }}>Goal:</strong>
+                    <span style={{ color: '#1e40af' }}> {Math.round(recommendations.daily_protein || 0)} g protein • {Math.round(recommendations.daily_calories || 0)} kcal</span>
+                    {recommendations.daily_fiber !== undefined && recommendations.daily_magnesium !== undefined ?
+                      <span style={{ color: '#1e40af' }}> • {Math.round(recommendations.daily_fiber || 0)} g fiber • {Math.round(recommendations.daily_magnesium || 0)} mg magnesium</span> : ''}
+                    {recommendations.daily_magnesium_pct ? <span style={{ color: '#1e40af' }}> ({Math.round(recommendations.daily_magnesium_pct)}% RDA)</span> : ''}
+                    {recommendations.magnesium_warning ? (
+                      <span style={{ color: '#dc2626', marginLeft: '12px', fontWeight: '600' }}>⚠ High magnesium — review servings</span>
+                    ) : null}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  {Object.keys(mealPlan).map((mealName) => {
+                    const items = mealPlan[mealName] || [];
+                    const totals = items.reduce(
+                      (acc, it) => {
+                        acc.calories += Number(it.calories || 0);
+                        acc.protein += Number(it.protein || 0);
+                        acc.carbs += Number(it.carbohydrates || it.carbs_g || 0);
+                        acc.fat += Number(it.fat || 0);
+                        acc.fiber += Number(it.fiber || 0);
+                        acc.magnesium += Number(it.magnesium || 0);
+                        return acc;
+                      },
+                      { calories: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, magnesium: 0 }
+                    );
+
+                    return (
+                      <div key={mealName} style={{ minWidth: '280px', flex: '1 1 280px', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', background: '#fff' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <strong style={{ fontSize: '15px', color: '#1a202c' }}>{mealName}</strong>
+                          <small style={{ color: '#718096', fontSize: '12px', fontWeight: '500' }}>{items.length} items</small>
                         </div>
-                        
-                        {activity.equipment && (
-                          <div style={{ marginBottom: 10, fontSize: 13 }}>
-                            <span style={{ color: '#666' }}>Equipment: </span>
-                            <span style={{ fontWeight: 600 }}>{activity.equipment}</span>
+                        <ul style={{ padding: '0', margin: '0', listStyle: 'none' }}>
+                          {items.map((it, i) => (
+                            <li key={it.id || `${mealName}-${i}`} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px dashed #e2e8f0' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
+                                <div>
+                                  <div style={{ fontWeight: '600', display: 'flex', alignItems: 'center', gap: '8px', color: '#1a202c', marginBottom: '4px' }}>
+                                    {it.food || it.name}
+                                    {it.reason === 'liked' && <span style={{ fontSize: '11px', background: '#c6f6d5', color: '#22543d', padding: '2px 8px', borderRadius: '4px', fontWeight: '500' }}>Liked</span>}
+                                    {it.reason === 'snack' && <span style={{ fontSize: '11px', background: '#fef08a', color: '#854d0e', padding: '2px 8px', borderRadius: '4px', fontWeight: '500' }}>Snack</span>}
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: '#718096' }}>{it.category || ''}{it.tags ? ` • ${it.tags}` : ''}</div>
+                                </div>
+                                <div style={{ textAlign: 'right', fontSize: '12px', color: '#1a202c', fontWeight: '600' }}>
+                                  <div>{Math.round(Number(it.calories || 0))} kcal</div>
+                                  <div style={{ fontSize: '11px', color: '#718096' }}>{Math.round(Number(it.protein || 0))} g protein</div>
+                                  {it.serving_multiplier && it.serving_multiplier > 1.05 && <div style={{ fontSize: '11px', color: '#718096', fontStyle: 'italic' }}>x{it.serving_multiplier.toFixed(1)}</div>}
+                                </div>
+                              </div>
+                              <div style={{ marginBottom: '12px', fontSize: '12px', color: '#4a5568', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                <span>Carbs: {Math.round(Number(it.carbohydrates || it.carbs_g || 0))} g</span>
+                                <span>Fat: {Math.round(Number(it.fat || 0))} g</span>
+                                <span>Fiber: {Math.round(Number(it.fiber || 0))} g</span>
+                                <span>Mg: {Math.round(Number(it.magnesium || 0))} mg</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                <button onClick={async () => { const nid = it.id || it.item_id; if (nid && userCreated) { setLikedItemIds(prev => new Set(prev).add(nid)); setDislikedItemIds(prev => { const n = new Set(prev); n.delete(nid); return n; }); try { await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'like' }); await getRecommendationsForUser(userId); } catch (e) { console.error('Failed to log like', e); setLikedItemIds(prev => { const n = new Set(prev); n.delete(nid); return n; }); alert('Failed to record like'); } } }} disabled={likedItemIds.has(it.id || it.item_id)} style={{ padding: '6px 12px', borderRadius: '4px', background: likedItemIds.has(it.id || it.item_id) ? '#c6f6d5' : '#fff', border: '1px solid ' + (likedItemIds.has(it.id || it.item_id) ? '#86efac' : '#e2e8f0'), cursor: 'pointer', color: likedItemIds.has(it.id || it.item_id) ? '#22543d' : '#4a5568', fontSize: '12px', fontWeight: '500' }}>{likedItemIds.has(it.id || it.item_id) ? '✓ Liked' : 'Like'}</button>
+                                <button onClick={async () => { const nid = it.id || it.item_id; if (nid && userCreated) { setDislikedItemIds(prev => new Set(prev).add(nid)); setLikedItemIds(prev => { const n = new Set(prev); n.delete(nid); return n; }); try { await apiLogInteraction({ user_id: userId, nutrition_item_id: nid, event_type: 'dislike' }); await getRecommendationsForUser(userId); } catch (e) { console.error('Failed to log dislike', e); setDislikedItemIds(prev => { const n = new Set(prev); n.delete(nid); return n; }); alert('Failed to record dislike'); } } }} disabled={dislikedItemIds.has(it.id || it.item_id)} style={{ padding: '6px 12px', borderRadius: '4px', background: dislikedItemIds.has(it.id || it.item_id) ? '#fed7d7' : '#fff', border: '1px solid ' + (dislikedItemIds.has(it.id || it.item_id) ? '#fca5a5' : '#e2e8f0'), cursor: 'pointer', color: dislikedItemIds.has(it.id || it.item_id) ? '#742a2a' : '#4a5568', fontSize: '12px', fontWeight: '500' }}>{dislikedItemIds.has(it.id || it.item_id) ? '✗ Disliked' : 'Dislike'}</button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                        <div style={{ marginTop: '12px', borderTop: '1px solid #e2e8f0', paddingTop: '12px', display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                          <div style={{ fontWeight: '600', color: '#1a202c' }}>Meal total</div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontWeight: '600', color: '#1a202c' }}>{Math.round(totals.calories)} kcal</div>
+                            <div style={{ color: '#718096', fontSize: '12px' }}>{Math.round(totals.protein)} g protein</div>
+                            <div style={{ color: '#718096', fontSize: '12px' }}>{Math.round(totals.fiber)} g fiber • {Math.round(totals.magnesium)} mg</div>
                           </div>
-                        )}
-
-                        {activity.hybrid_score !== undefined && activity.hybrid_score !== null && (
-                          <div style={{ marginBottom: 12, padding: 8, background: '#f0fdf4', borderRadius: 6, fontSize: 12 }}>
-                            <div style={{ color: '#666' }}>Match Score</div>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: '#22c55e' }}>
-                              {Math.round(activity.hybrid_score * 100)}%
-                            </div>
-                          </div>
-                        )}
-
-                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                          <button
-                            onClick={async () => {
-                              const fid = activity.id || null;
-                              if (!fid) return;
-                              if (!userCreated) {
-                                alert('Create or load a user before interacting');
-                                return;
-                              }
-                              setLikedItemIds(prev => {
-                                const next = new Set(prev);
-                                next.add(fid);
-                                return next;
-                              });
-                              setDislikedItemIds(prev => {
-                                const next = new Set(prev);
-                                next.delete(fid);
-                                return next;
-                              });
-                              try {
-                                await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'like' });
-                                await getRecommendationsForUser(userId);
-                              } catch (e) {
-                                console.error('Failed to log like interaction', e);
-                                setLikedItemIds(prev => {
-                                  const next = new Set(prev);
-                                  next.delete(fid);
-                                  return next;
-                                });
-                                alert('Failed to record like');
-                              }
-                            }}
-                            disabled={likedItemIds.has(activity.id)}
-                            style={{
-                              flex: 1,
-                              padding: '0.5rem',
-                              borderRadius: 4,
-                              background: likedItemIds.has(activity.id) ? '#d1fae5' : '#fff',
-                              border: likedItemIds.has(activity.id) ? '1px solid #86efac' : '1px solid #d1d5db',
-                              cursor: 'pointer',
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: likedItemIds.has(activity.id) ? '#065f46' : '#333'
-                            }}
-                          >
-                            {likedItemIds.has(activity.id) ? '✓ Liked' : 'Like'}
-                          </button>
-
-                          <button
-                            onClick={async () => {
-                              const fid = activity.id || null;
-                              if (!fid) return;
-                              if (!userCreated) {
-                                alert('Create or load a user before interacting');
-                                return;
-                              }
-                              setDislikedItemIds(prev => {
-                                const next = new Set(prev);
-                                next.add(fid);
-                                return next;
-                              });
-                              setLikedItemIds(prev => {
-                                const next = new Set(prev);
-                                next.delete(fid);
-                                return next;
-                              });
-                              try {
-                                await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'dislike' });
-                                await getRecommendationsForUser(userId);
-                              } catch (e) {
-                                console.error('Failed to log dislike interaction', e);
-                                setDislikedItemIds(prev => {
-                                  const next = new Set(prev);
-                                  next.delete(fid);
-                                  return next;
-                                });
-                                alert('Failed to record dislike');
-                              }
-                            }}
-                            disabled={dislikedItemIds.has(activity.id)}
-                            style={{
-                              flex: 1,
-                              padding: '0.5rem',
-                              borderRadius: 4,
-                              background: dislikedItemIds.has(activity.id) ? '#fee2e2' : '#fff',
-                              border: dislikedItemIds.has(activity.id) ? '1px solid #fca5a5' : '1px solid #d1d5db',
-                              cursor: 'pointer',
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: dislikedItemIds.has(activity.id) ? '#7f1d1d' : '#333'
-                            }}
-                          >
-                            {dislikedItemIds.has(activity.id) ? '✗ Disliked' : 'Dislike'}
-                          </button>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-              )}
-
-                {/* Recommended Items removed per UI request - only show meal plan and fitness recommendations */}
+              </div>
+            )}
+            {recommendations.fitness_items && recommendations.fitness_items.length > 0 && (
+              <div style={{ marginTop: '32px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#1a202c' }}>Fitness Recommendations</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+                  {recommendations.fitness_items.map((activity, idx) => (
+                    <div key={activity.id || idx} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)', background: '#fff', transition: 'all 0.2s ease', cursor: 'pointer' }} onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.12)'; }} onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'; }}>
+                      <div style={{ marginBottom: '12px' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '700', color: '#1a202c', marginBottom: '8px' }}>{activity.name}</div>
+                        <div style={{ fontSize: '12px', color: '#4a5568', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <span style={{ background: '#f0f4f8', padding: '4px 10px', borderRadius: '4px', fontWeight: '500' }}>{activity.type}</span>
+                          <span style={{ background: '#f0f4f8', padding: '4px 10px', borderRadius: '4px', fontWeight: '500' }}>{activity.level}</span>
+                          <span style={{ background: '#f0f4f8', padding: '4px 10px', borderRadius: '4px', fontWeight: '500' }}>{activity.bodypart}</span>
+                        </div>
+                      </div>
+                      {activity.equipment && <div style={{ marginBottom: '12px', fontSize: '13px' }}><span style={{ color: '#718096' }}>Equipment: </span><span style={{ fontWeight: '600', color: '#1a202c' }}>{activity.equipment}</span></div>}
+                      {activity.hybrid_score !== undefined && activity.hybrid_score !== null && (
+                        <div style={{ marginBottom: '12px', padding: '12px', background: '#f0fdf4', borderRadius: '6px', fontSize: '13px', border: '1px solid #86efac' }}>
+                          <div style={{ color: '#4a5568', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: '500' }}>Match Score</div>
+                          <div style={{ fontSize: '20px', fontWeight: '700', color: '#22c55e', marginTop: '4px' }}>{Math.round(activity.hybrid_score * 100)}%</div>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                        <button onClick={async () => { const fid = activity.id; if (fid && userCreated) { setLikedItemIds(prev => new Set(prev).add(fid)); setDislikedItemIds(prev => { const n = new Set(prev); n.delete(fid); return n; }); try { await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'like' }); await getRecommendationsForUser(userId); } catch (e) { console.error('Failed to log like', e); setLikedItemIds(prev => { const n = new Set(prev); n.delete(fid); return n; }); alert('Failed to record like'); } } }} disabled={likedItemIds.has(activity.id)} style={{ flex: 1, padding: '8px 12px', borderRadius: '4px', background: likedItemIds.has(activity.id) ? '#c6f6d5' : '#fff', border: likedItemIds.has(activity.id) ? '1px solid #86efac' : '1px solid #e2e8f0', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: likedItemIds.has(activity.id) ? '#22543d' : '#4a5568' }}>{likedItemIds.has(activity.id) ? '✓ Liked' : 'Like'}</button>
+                        <button onClick={async () => { const fid = activity.id; if (fid && userCreated) { setDislikedItemIds(prev => new Set(prev).add(fid)); setLikedItemIds(prev => { const n = new Set(prev); n.delete(fid); return n; }); try { await apiLogInteraction({ user_id: userId, fitness_item_id: fid, event_type: 'dislike' }); await getRecommendationsForUser(userId); } catch (e) { console.error('Failed to log dislike', e); setDislikedItemIds(prev => { const n = new Set(prev); n.delete(fid); return n; }); alert('Failed to record dislike'); } } }} disabled={dislikedItemIds.has(activity.id)} style={{ flex: 1, padding: '8px 12px', borderRadius: '4px', background: dislikedItemIds.has(activity.id) ? '#fed7d7' : '#fff', border: dislikedItemIds.has(activity.id) ? '1px solid #fca5a5' : '1px solid #e2e8f0', cursor: 'pointer', fontSize: '13px', fontWeight: '600', color: dislikedItemIds.has(activity.id) ? '#742a2a' : '#4a5568' }}>{dislikedItemIds.has(activity.id) ? '✗ Disliked' : 'Dislike'}</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div style={cardStyle}>
-            <p style={{ color: '#6b7280', fontSize: 14 }}>Load a user and click "Get Recommendations" to see meal plans and recommendations.</p>
+            <p style={{ color: '#718096', fontSize: '14px', margin: '0' }}>Load a user and click "Get Recommendations" to see meal plans and recommendations.</p>
           </div>
         )}
 

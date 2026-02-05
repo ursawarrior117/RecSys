@@ -33,7 +33,7 @@ async def get_recommendations(
     if rec_type not in ('nutrition', 'fitness', 'all'):
         rec_type = 'all'
     
-    print(f'[RECOMMENDATION] User {user_id}, rec_type={rec_type}, bodypart={bodypart}')
+    print(f'[RECOMMENDATION] STARTING - User {user_id}, rec_type={rec_type}, bodypart={bodypart}')
     
     # Get user
     user = db.query(User).filter(User.id == user_id).first()
@@ -180,15 +180,24 @@ async def get_recommendations(
     nutrition_df = pd.DataFrame([item.__dict__ for item in nutrition_items])
     fitness_df = pd.DataFrame([item.__dict__ for item in fitness_items])
 
+    # Initialize all variables that will be used
+    bmi = None
+    bmr = None
+    tdee = None
+    
     # Compute BMR/TDEE and nutrition targets once so scorer can use them
     try:
         w = float(user.weight)
-    except Exception:
+        print(f'[DEBUG] w (weight) = {w}')
+    except Exception as e:
         w = 70.0
+        print(f'[DEBUG] Failed to get weight: {e}')
     try:
         h = float(user.height)
-    except Exception:
+        print(f'[DEBUG] h (height) = {h}')
+    except Exception as e:
         h = 170.0
+        print(f'[DEBUG] Failed to get height: {e}')
     try:
         a = float(user.age)
     except Exception:
@@ -197,6 +206,13 @@ async def get_recommendations(
         gender = (user.gender or '').strip().upper()
     except Exception:
         gender = 'M'
+    try:
+        # Calculate BMI: weight (kg) / (height (cm) / 100) ^ 2
+        bmi = w / ((h / 100.0) ** 2)
+        print(f'[DEBUG] Calculated BMI: {bmi} from weight={w} height={h}')
+    except Exception as e:
+        bmi = None
+        print(f'[DEBUG] BMI calculation failed: {e}', exc_info=True)
     try:
         # Accept 'M', 'MALE', 'male' etc. Treat first char 'M' as male
         if gender and gender[0] == 'M':
@@ -695,6 +711,9 @@ async def get_recommendations(
         nutrition_items=nutr_list if rec_type in ('nutrition', 'all') else [],
         fitness_items=fit_list if rec_type in ('fitness', 'all') else [],
         tdee=float(tdee) if tdee is not None else None,
+        bmi=float(bmi) if bmi is not None else None,
+        user_height=float(h) if h is not None else None,
+        user_weight=float(w) if w is not None else None,
         nutrition_goal=float(nutrition_goal) if nutrition_goal is not None else None,
         bmr=float(bmr) if bmr is not None else None,
         nutrition_targets=nutrition_targets,
@@ -707,5 +726,5 @@ async def get_recommendations(
         daily_magnesium_pct=daily_magnesium_pct if rec_type in ('nutrition', 'all') else None,
         magnesium_warning=magnesium_warning if rec_type in ('nutrition', 'all') else None
     )
-    print(f'[RECOMMENDATION] Returning {len(result.nutrition_items)} nutrition, {len(result.fitness_items)} fitness')
+    print(f'[RECOMMENDATION] Returning BMI={result.bmi}, {len(result.nutrition_items)} nutrition, {len(result.fitness_items)} fitness')
     return result

@@ -409,16 +409,6 @@ def _select_meal_by_combinations(candidates: list, capacity_cal: float, max_item
 
 
 def _scale_portions_for_protein(meal_items: list, target_protein: float, capacity_cal: float = None):
-    """
-    Compute serving multipliers for meal items to meet target protein.
-    
-    Args:
-        meal_items: list of selected items with 'protein_val'
-        target_protein: protein target for the meal
-    
-    Returns:
-        list of (item, multiplier) tuples; multiplier capped at 1.5 (was 2.0) to avoid excessive scaling
-    """
     if not meal_items:
         return []
     
